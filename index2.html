@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>砖块式排布 · 竖向只用 extraGap · 动态上限(降级回退) · 圆角/脉速可调</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: #0b0f14
+        }
+
+        canvas {
+            position: fixed;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            cursor: grab
+        }
+
+        .ui {
+            position: fixed;
+            left: 16px;
+            top: 16px;
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+            flex-wrap: wrap;
+            align-items: center;
+            max-width: 96vw
+        }
+
+        .btn {
+            cursor: pointer;
+            border: 1px solid #2a3340;
+            background: #101825;
+            color: #e6eefc;
+            padding: 8px 12px;
+            border-radius: 10px;
+            font: 600 12px/1 ui-sans-serif, system-ui
+        }
+
+        .btn[aria-pressed="true"] {
+            background: #1b2a40;
+            border-color: #314257
+        }
+
+        .chip {
+            user-select: none;
+            border: 1px solid #2a3340;
+            background: #0f141b;
+            color: #cdd6f4;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font: 12px/1 ui-sans-serif, system-ui
+        }
+
+        .panel {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            background: #0f141b;
+            border: 1px solid #2a3340;
+            padding: 8px 12px;
+            border-radius: 12px
+        }
+
+        .panel label {
+            font: 12px/1 ui-sans-serif, system-ui;
+            color: #cdd6f4;
+            opacity: .95
+        }
+
+        .panel input[type=range] {
+            width: 160px
+        }
+
+        .val {
+            min-width: 62px;
+            display: inline-block;
+            text-align: right;
+            color: #e6eefc;
+            font-weight: 600
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="gl"></canvas>
+    <div class="ui">
+        <button id="reset" class="btn">重置布局 (R)</button>
+        <button id="pulse" class="btn" aria-pressed="true">脉动：开 (P)</button>
+        <button id="drag" class="btn" aria-pressed="true">拖拽：开 (D)</button>
+        <button id="hover" class="btn" aria-pressed="true">鼠标摇晃响应：开 (M)</button>
+        <span id="capInfo" class="chip">排布：砖块式（行与行横向错半个节距），竖向相邻边距 = extraGap；中心必有一块</span>
+        <div class="panel">
+            <label>尺寸 <span id="vSize" class="val"></span>
+                <input id="sizeRange" type="range" min="12" max="160" step="1" />
+            </label>
+            <label>间隔 <span id="vGap" class="val"></span>
+                <input id="gapRange" type="range" min="0" max="120" step="1" />
+            </label>
+            <label>数量 <span id="vCount" class="val"></span>
+                <input id="countRange" type="range" min="1" max="9999" step="1" />
+            </label>
+            <label>圆角 <span id="vRadius" class="val"></span>
+                <input id="radiusRange" type="range" min="0" max="80" step="1" />
+            </label>
+            <label>脉动速度 <span id="vSpeed" class="val"></span>
+                <input id="speedRange" type="range" min="0" max="3" step="0.01" />
+            </label>
+        </div>
+    </div>
+
+    <script>
+        (() => {
+            // ========= 配置 =========
+            const CFG = {
+                size: 20, // 方块边长（CSS px）
+                corner: 4, // 圆角（CSS px）
+                extraGap: 8, // 间隔（CSS px）。★竖向就是它本身；横向仍为“空一块”+它
+                marginX: 0,
+                marginY: 0,
+
+                // 连接场参数
+                connectRange: 3.5,
+                threshold: 1.0,
+                aa: 1.0,
+
+                // 脉动（全体同相位，严格基于当前尺寸）
+                pulseSpeedHz: 0.5,
+                pulseMin: 0.0,
+
+                // 鼠标摇晃响应（悬停块）
+                hoverMaxScale: 1.5,
+                hoverDisp: 22,
+                hoverFriction: 0.86,
+                speedToScale: 0.45,
+                speedCap: 1.2
+            };
+
+            const canvas = document.getElementById('gl');
+            const gl = canvas.getContext('webgl');
+            if (!gl) {
+                alert('需要 WebGL 支持');
+                return;
+            }
+            const DPR = Math.min(2, window.devicePixelRatio || 1);
+
+            // ========== 依据硬件上限，逐级尝试编译（失败就降级） ==========
+            const maxVec = gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS) || 256; // 以 vec4 计
+            const reserved = 32; // 预留给其它 uniform
+            const usableVec = Math.max(8, maxVec - reserved);
+            const floats = usableVec * 4; // 可用 float 数
+            const theoretical = Math.max(32, Math.floor(floats / 3)); // 每块 3 float（vec2+float）
+            // 备选序列：理论值→256→192→160→128→96→64
+            const tryCaps = Array.from(new Set([
+                theoretical,
+                512, 384, 320, 256, 224, 192, 160, 128, 96, 64, 48, 32
+            ])).filter(n => n > 0).sort((a, b) => b - a);
+
+            let CAP_N = 0,
+                prog = null;
+            let a_pos, u_res, u_count, u_center, u_scaleU, u_half0, u_radius0, u_falloff, u_thresh, u_aa;
+
+            function compile(type, src) {
+                const sh = gl.createShader(type);
+                gl.shaderSource(sh, src);
+                gl.compileShader(sh);
+                if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+                return sh;
+            }
+
+            function link(vs, fs) {
+                const p = gl.createProgram();
+                gl.attachShader(p, vs);
+                gl.attachShader(p, fs);
+                gl.linkProgram(p);
+                if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+                return p;
+            }
+
+            function tryBuild(maxN) {
+                const vertSrc = `attribute vec2 a_pos; void main(){ gl_Position = vec4(a_pos,0.0,1.0);} `;
+                const fragSrc = `
+      precision highp float; const int MAX_N = ${maxN};
+      uniform vec2  u_res;
+      uniform int   u_count;
+      uniform vec2  u_center[MAX_N];  // 使用数组，位置读取用 [0]
+      uniform float u_scale[MAX_N];
+      uniform vec2  u_half0;
+      uniform float u_radius0;
+      uniform float u_falloff;
+      uniform float u_thresh;
+      uniform float u_aa;
+      float sdRoundBox(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b; return length(max(q,0.0)) - r; }
+      void main(){
+        vec2 uv = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y);
+        float phi = 0.0; float dmin = 1e9; bool inside=false;
+        for(int i=0;i<MAX_N;i++){
+          if(i>=u_count) break;
+          float sc = u_scale[i];
+          vec2  b  = u_half0 * sc; // 脉动严格基于当前尺寸
+          float r  = u_radius0 * sc;
+          float d  = sdRoundBox(uv - u_center[i], b - vec2(r), r);
+          dmin = min(dmin,d); if(d<=0.0) inside=true; phi += exp(-u_falloff * max(d,0.0));
+        }
+        float mask = inside ? 1.0 : step(u_thresh, phi);
+        float aa = clamp(1.0 - smoothstep(0.0, u_aa, dmin), 0.0, 1.0);
+        mask = max(mask, aa*0.95);
+        gl_FragColor = vec4(vec3(mask),1.0);
+      }
+    `;
+                const vs = compile(gl.VERTEX_SHADER, vertSrc);
+                const fs = compile(gl.FRAGMENT_SHADER, fragSrc);
+                const p = link(vs, fs);
+                gl.deleteShader(vs);
+                gl.deleteShader(fs);
+                return {
+                    p,
+                    maxN
+                };
+            }
+
+            for (const cand of tryCaps) {
+                try {
+                    const {
+                        p,
+                        maxN
+                    } = tryBuild(cand);
+                    prog = p;
+                    CAP_N = maxN;
+                    break;
+                } catch (err) {
+                    /* 降级继续尝试 */
+                }
+            }
+            if (!prog) {
+                alert('着色器编译失败：硬件 uniform 上限过低');
+                return;
+            }
+            gl.useProgram(prog);
+
+            // 顶点大三角形
+            const quad = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+            a_pos = gl.getAttribLocation(prog, 'a_pos');
+            gl.enableVertexAttribArray(a_pos);
+            gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+            // ★ 取数组 uniform 的第 0 个元素位置（兼容更多浏览器）
+            u_res = gl.getUniformLocation(prog, 'u_res');
+            u_count = gl.getUniformLocation(prog, 'u_count');
+            u_center = gl.getUniformLocation(prog, 'u_center[0]');
+            u_scaleU = gl.getUniformLocation(prog, 'u_scale[0]');
+            u_half0 = gl.getUniformLocation(prog, 'u_half0');
+            u_radius0 = gl.getUniformLocation(prog, 'u_radius0');
+            u_falloff = gl.getUniformLocation(prog, 'u_falloff');
+            u_thresh = gl.getUniformLocation(prog, 'u_thresh');
+            u_aa = gl.getUniformLocation(prog, 'u_aa');
+
+            // 显示能力上限
+            const capInfo = document.getElementById('capInfo');
+            capInfo.textContent += ` ｜编译成功上限：${CAP_N} 块`;
+
+            function pushStatics() {
+                gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
+                gl.uniform1f(u_radius0, CFG.corner * DPR);
+                gl.uniform1f(u_aa, CFG.aa * DPR);
+                const falloff = Math.log(2.0) / (CFG.connectRange * DPR);
+                gl.uniform1f(u_falloff, falloff);
+                gl.uniform1f(u_thresh, CFG.threshold);
+            }
+
+            function resize() {
+                const w = Math.floor(innerWidth * DPR);
+                const h = Math.floor(innerHeight * DPR);
+                canvas.width = w;
+                canvas.height = h;
+                canvas.style.width = innerWidth + 'px';
+                canvas.style.height = innerHeight + 'px';
+                gl.viewport(0, 0, w, h);
+                gl.uniform2f(u_res, w, h);
+                rebuildAll();
+            }
+            window.addEventListener('resize', resize);
+
+            // ========= 砖块式网格（横向错半个节距；竖向仅 extraGap） =========
+            const blocks = [];
+            let count = 0;
+            let targetCount = CAP_N; // 默认尽可能多
+            function computeSlots() {
+                const slots = [];
+                const W = canvas.width,
+                    H = canvas.height;
+                const s = CFG.size * DPR;
+                const stepX = s * 2 + CFG.extraGap * DPR; // 横向“空一块” + extraGap
+                const stepY = s + CFG.extraGap / 2 * DPR; // ★竖向只用 extraGap
+                const cx0 = W * 0.5,
+                    cy0 = H * 0.5;
+                const marginX = (CFG.marginX + CFG.connectRange * 2) * DPR;
+                const marginY = CFG.marginY * DPR;
+
+                const nyT = Math.floor((cy0 - marginY) / stepY);
+                const nyB = Math.floor((H - marginY - cy0) / stepY);
+                for (let jy = -nyT; jy <= nyB; jy++) {
+                    const offset = (Math.abs(jy) % 2 === 1) ? 0.5 : 0.0; // 横向错半个
+                    const iMin = Math.ceil((marginX - cx0) / stepX - offset);
+                    const iMax = Math.floor(((W - marginX) - cx0) / stepX - offset);
+                    for (let ix = iMin; ix <= iMax; ix++) {
+                        const x = cx0 + (ix + offset) * stepX;
+                        const y = cy0 + jy * stepY;
+                        const dx = x - cx0,
+                            dy = y - cy0;
+                        const d = dx * dx + dy * dy;
+                        slots.push({
+                            x,
+                            y,
+                            d
+                        });
+                        if (slots.length >= CAP_N * 2) break; // 控制规模
+                    }
+                    if (slots.length >= CAP_N * 2) break;
+                }
+                slots.sort((a, b) => a.d - b.d); // 中心优先
+                return slots;
+            }
+
+            function buildGrid() {
+                const slots = computeSlots();
+                const maxUsable = Math.min(slots.length, CAP_N);
+                targetCount = Math.max(1, Math.min(targetCount, maxUsable));
+                blocks.length = 0;
+                for (let i = 0; i < targetCount; i++) {
+                    const s = slots[i];
+                    blocks.push({
+                        cx: s.x,
+                        cy: s.y,
+                        offx: 0,
+                        offy: 0
+                    });
+                }
+                count = blocks.length;
+                gl.uniform1i(u_count, count);
+                updateCountSlider(maxUsable);
+            }
+
+            // ========= 开关 =========
+            let pulseOn = false,
+                dragOn = false,
+                hoverOn = true;
+            const btnPulse = document.getElementById('pulse');
+            const btnDrag = document.getElementById('drag');
+            const btnHover = document.getElementById('hover');
+
+            function syncBtns() {
+                btnPulse.setAttribute('aria-pressed', pulseOn);
+                btnPulse.textContent = `脉动：${pulseOn?'开':'关'} (P)`;
+                btnDrag.setAttribute('aria-pressed', dragOn);
+                btnDrag.textContent = `拖拽：${dragOn?'开':'关'} (D)`;
+                btnHover.setAttribute('aria-pressed', hoverOn);
+                btnHover.textContent = `鼠标摇晃响应：${hoverOn?'开':'关'} (M)`;
+                canvas.style.cursor = dragOn ? (dragging > -1 ? 'grabbing' : 'grab') : 'default';
+            }
+            btnPulse.onclick = () => {
+                pulseOn = !pulseOn;
+                syncBtns();
+            };
+            btnDrag.onclick = () => {
+                dragOn = !dragOn;
+                syncBtns();
+            };
+            btnHover.onclick = () => {
+                hoverOn = !hoverOn;
+                syncBtns();
+            };
+            document.getElementById('reset').onclick = () => {
+                rebuildAll();
+            };
+            window.addEventListener('keydown', e => {
+                if (e.key === 'r' || e.key === 'R') rebuildAll();
+                if (e.key === 'p' || e.key === 'P') btnPulse.click();
+                if (e.key === 'd' || e.key === 'D') btnDrag.click();
+                if (e.key === 'm' || e.key === 'M') btnHover.click();
+            });
+
+            // ========= 滑杆 =========
+            const sizeRange = document.getElementById('sizeRange');
+            const gapRange = document.getElementById('gapRange');
+            const countRange = document.getElementById('countRange');
+            const radiusRange = document.getElementById('radiusRange');
+            const speedRange = document.getElementById('speedRange');
+            const vSize = document.getElementById('vSize');
+            const vGap = document.getElementById('vGap');
+            const vCount = document.getElementById('vCount');
+            const vRadius = document.getElementById('vRadius');
+            const vSpeed = document.getElementById('vSpeed');
+
+            function initSliders() {
+                sizeRange.value = CFG.size;
+                vSize.textContent = CFG.size + ' px';
+                gapRange.value = CFG.extraGap;
+                vGap.textContent = CFG.extraGap + ' px';
+                radiusRange.value = CFG.corner;
+                vRadius.textContent = CFG.corner + ' px';
+                speedRange.value = CFG.pulseSpeedHz;
+                vSpeed.textContent = CFG.pulseSpeedHz.toFixed(2) + ' Hz';
+            }
+
+            function updateCountSlider(maxUsable) {
+                countRange.max = String(maxUsable);
+                countRange.value = String(targetCount);
+                vCount.textContent = `${targetCount}/${maxUsable}`;
+            }
+
+            sizeRange.addEventListener('input', () => {
+                CFG.size = +sizeRange.value;
+                vSize.textContent = CFG.size + ' px';
+                pushStatics();
+                rebuildGridOnly();
+            });
+            gapRange.addEventListener('input', () => {
+                CFG.extraGap = +gapRange.value;
+                vGap.textContent = CFG.extraGap + ' px';
+                rebuildGridOnly();
+            });
+            countRange.addEventListener('input', () => {
+                targetCount = +countRange.value;
+                vCount.textContent = `${targetCount}/${countRange.max}`;
+                buildGrid();
+            });
+            radiusRange.addEventListener('input', () => {
+                CFG.corner = +radiusRange.value;
+                vRadius.textContent = CFG.corner + ' px';
+                pushStatics();
+            });
+            speedRange.addEventListener('input', () => {
+                CFG.pulseSpeedHz = +speedRange.value;
+                vSpeed.textContent = CFG.pulseSpeedHz.toFixed(2) + ' Hz';
+            });
+
+            function rebuildGridOnly() {
+                buildGrid();
+            }
+
+            function rebuildAll() {
+                pushStatics();
+                buildGrid();
+            }
+
+            // ========= 命中/鼠标 =========
+            let mx = 0,
+                my = 0,
+                mvx = 0,
+                mvy = 0,
+                mSpeed = 0,
+                lastT = performance.now();
+            let hoverIndex = -1;
+
+            function sdRoundBoxJS(px, py, cx, cy, half, r) {
+                const qx = Math.abs(px - cx) - half,
+                    qy = Math.abs(py - cy) - half;
+                const ax = Math.max(qx, 0),
+                    ay = Math.max(qy, 0);
+                return Math.hypot(ax, ay) - r;
+            }
+
+            function pickIndex(x, y) {
+                const half = (CFG.size * DPR) / 2,
+                    r = CFG.corner * DPR;
+                for (let i = count - 1; i >= 0; i--) {
+                    const b = blocks[i];
+                    if (sdRoundBoxJS(x, y, b.cx + b.offx, b.cy + b.offy, half, r) <= 0) return i;
+                }
+                return -1;
+            }
+            canvas.addEventListener('pointermove', e => {
+                const t = performance.now();
+                const x = e.clientX * DPR,
+                    y = e.clientY * DPR;
+                const dt = Math.max(16, t - lastT);
+                mvx = (x - mx) / dt;
+                mvy = (y - my) / dt;
+                mSpeed = Math.min(CFG.speedCap, Math.hypot(mvx, mvy));
+                mx = x;
+                my = y;
+                lastT = t;
+                if (hoverOn) hoverIndex = pickIndex(mx, my);
+                else hoverIndex = -1;
+            }, {
+                passive: true
+            });
+
+            // ========= 拖拽 =========
+            let dragging = -1,
+                offx = 0,
+                offy = 0;
+            canvas.addEventListener('pointerdown', e => {
+                if (!dragOn) return;
+                const x = e.clientX * DPR,
+                    y = e.clientY * DPR;
+                const i = pickIndex(x, y);
+                if (i >= 0) {
+                    dragging = i;
+                    offx = x - (blocks[i].cx + blocks[i].offx);
+                    offy = y - (blocks[i].cy + blocks[i].offy);
+                    canvas.setPointerCapture(e.pointerId);
+                    canvas.style.cursor = 'grabbing';
+                }
+            });
+            canvas.addEventListener('pointermove', e => {
+                if (dragging < 0 || !dragOn) return;
+                const x = e.clientX * DPR,
+                    y = e.clientY * DPR;
+                const b = blocks[dragging];
+                b.cx = x - offx - b.offx;
+                b.cy = y - offy - b.offy;
+            });
+            canvas.addEventListener('pointerup', e => {
+                if (dragging >= 0) canvas.releasePointerCapture(e.pointerId);
+                dragging = -1;
+                canvas.style.cursor = dragOn ? 'grab' : 'default';
+            });
+
+            // ========= 帧循环 =========
+            const cBuf = new Float32Array(CAP_N * 2);
+            const sBuf = new Float32Array(CAP_N);
+
+            function frame() {
+                const t = performance.now() * 0.001; // s
+                const p = CFG.pulseMin + (1.0 - CFG.pulseMin) * 0.5 * (1.0 + Math.sin(2.0 * Math.PI * CFG
+                    .pulseSpeedHz * t));
+
+                for (let i = 0; i < count; i++) {
+                    const b = blocks[i];
+                    let grow = 1.0,
+                        ox = b.offx,
+                        oy = b.offy;
+                    if (hoverOn && i === hoverIndex) {
+                        const v = Math.min(1.0, mSpeed / CFG.speedCap);
+                        const k = v * CFG.speedToScale;
+                        grow = 1.0 + Math.min(CFG.hoverMaxScale - 1.0, k);
+                        ox += mvx * (CFG.hoverDisp * DPR) * v;
+                        oy += mvy * (CFG.hoverDisp * DPR) * v;
+                    }
+                    b.offx = ox * CFG.hoverFriction;
+                    b.offy = oy * CFG.hoverFriction;
+                    const sc = Math.min(CFG.hoverMaxScale, (pulseOn ? p : 1.0) * grow);
+                    cBuf[i * 2] = b.cx + b.offx;
+                    cBuf[i * 2 + 1] = b.cy + b.offy;
+                    sBuf[i] = sc;
+                }
+
+                gl.uniform2fv(u_center, cBuf);
+                gl.uniform1fv(u_scaleU, sBuf);
+                gl.drawArrays(gl.TRIANGLES, 0, 3);
+                requestAnimationFrame(frame);
+            }
+
+            // ========= 启动 =========
+            function start() {
+                resize();
+                pushStatics();
+                initSliders();
+                buildGrid();
+                syncBtns();
+                frame();
+            }
+            start();
+        })();
+    </script>
+</body>
+
+</html>

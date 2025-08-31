@@ -1,0 +1,1234 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>满屏粘连方块 · 尺寸落地锁 + 回弹随速度</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: #0b0f14
+        }
+
+        canvas {
+            position: fixed;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%
+        }
+
+        .ui {
+            position: fixed;
+            left: 16px;
+            top: 16px;
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+            flex-wrap: wrap;
+            align-items: center;
+            max-width: 96vw
+        }
+
+        .btn {
+            cursor: pointer;
+            border: 1px solid #2a3340;
+            background: #101825;
+            color: #e6eefc;
+            padding: 8px 12px;
+            border-radius: 10px;
+            font: 600 12px/1 ui-sans-serif, system-ui
+        }
+
+        .btn[aria-pressed="true"] {
+            background: #1b2a40;
+            border-color: #314257
+        }
+
+        .panel {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            background: #0f141b;
+            border: 1px solid #2a3340;
+            padding: 8px 12px;
+            border-radius: 12px
+        }
+
+        .panel label {
+            font: 12px/1 ui-sans-serif, system-ui;
+            color: #cdd6f4;
+            opacity: .95
+        }
+
+        .panel input[type=range] {
+            width: 160px
+        }
+
+        .val {
+            min-width: 62px;
+            display: inline-block;
+            text-align: right;
+            color: #e6eefc;
+            font-weight: 600
+        }
+
+        .err {
+            position: fixed;
+            left: 16px;
+            bottom: 16px;
+            color: #ffebee;
+            background: #3b1d22;
+            border: 1px solid #6b2a36;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font: 12px/1.4 ui-sans-serif, system-ui;
+            max-width: 70ch;
+            white-space: pre-wrap;
+            z-index: 10;
+            display: none
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="gl"></canvas>
+    <canvas id="fallback" style="z-index:-1"></canvas>
+
+    <div class="ui">
+        <button id="pulse" class="btn" aria-pressed="true">脉动：开 (P)</button>
+        <button id="pluck" class="btn" aria-pressed="true">拨动：开 (O)</button>
+
+        <div class="panel">
+            <label>尺寸 <span id="vSize" class="val"></span><input id="sizeRange" type="range" min="8" max="160"
+                    step="1" /></label>
+            <label>间隔 <span id="vGap" class="val"></span><input id="gapRange" type="range" min="0" max="120"
+                    step="1" /></label>
+            <label>圆角 <span id="vRadius" class="val"></span><input id="radiusRange" type="range" min="0" max="80"
+                    step="1" /></label>
+            <label>脉动速度 <span id="vSpeed" class="val"></span><input id="speedRange" type="range" min="0" max="3"
+                    step="0.01" /></label>
+            <label>连接范围 <span id="vCR" class="val"></span><input id="crRange" type="range" min="0" max="12"
+                    step="0.1" /></label>
+            <label>阈值 <span id="vTh" class="val"></span><input id="thRange" type="range" min="0.1" max="4"
+                    step="0.01" /></label>
+        </div>
+
+        <div class="panel">
+            <label>拨动强度上限 <span class="val">20</span></label>
+            <label>速度→强度比例 <span id="vRatio" class="val"></span><input id="ratioRange" type="range" min="0" max="0.1"
+                    step="0.001" /></label>
+            <label>释放延时(ms) <span id="vDelay" class="val"></span><input id="delayRange" type="range" min="0" max="500"
+                    step="10" /></label>
+        </div>
+
+        <div class="panel">
+            <label>拨动强度基准(amp) <span class="val">20</span></label>
+            <label>空间衰减σ <span id="vSig" class="val"></span><input id="sigRange" type="range" min="10" max="400"
+                    step="1" /></label>
+            <label>波长λ <span id="vLam" class="val"></span><input id="lamRange" type="range" min="20" max="800"
+                    step="1" /></label>
+            <label>频率Hz <span id="vFq" class="val"></span><input id="fqRange" type="range" min="0" max="5"
+                    step="0.01" /></label>
+            <label>时间阻尼γ <span id="vGam" class="val"></span><input id="gamRange" type="range" min="0" max="4"
+                    step="0.01" /></label>
+        </div>
+
+        <div class="panel">
+            <button id="bindAmp" class="btn" aria-pressed="true">amp↔速：正比</button>
+            <button id="bindSig" class="btn" aria-pressed="true">σ↔速：正比</button>
+            <button id="bindLam" class="btn" aria-pressed="true">λ↔速：正比</button>
+            <button id="bindFq" class="btn" aria-pressed="true">f↔速：正比</button>
+            <button id="bindGam" class="btn" aria-pressed="true">γ↔速：正比</button>
+            <label>映射用速度上限(px/s) <span id="vSCap" class="val"></span><input id="speedCapRange" type="range" min="200"
+                    max="4000" step="10" /></label>
+            <label>映射强度 <span id="vSEff" class="val"></span><input id="speedEffRange" type="range" min="0" max="2"
+                    step="0.01" /></label>
+            <label>当前速度 <span id="vMS" class="val"></span></label>
+        </div>
+
+        <div class="panel">
+            <label>影响范围最大格数 <span id="vMaxCells" class="val"></span><input id="maxCellsRange" type="range" min="80"
+                    max="200" step="1" /></label>
+            <label>速度放大倍率上限 <span id="vMaxScale" class="val"></span><input id="maxScaleRange" type="range" min="1.0"
+                    max="3.0" step="0.01" /></label>
+        </div>
+
+        <div class="panel">
+            <button id="capToggle" class="btn" aria-pressed="true">拨动限速：开</button>
+            <label>拨动速度硬上限(px/s) <span id="vPluckCap" class="val"></span><input id="pluckCapRange" type="range"
+                    min="200" max="4000" step="10" /></label>
+        </div>
+    </div>
+
+    <div id="err" class="err"></div>
+
+    <script>
+        (() => {
+            let lastTouch = null; // Float64Array，记录每格最后被注入/触摸的时间（秒）
+
+            // —— 你的当前参数（原样保留） ——
+            const CFG = {
+                size: 18,
+                corner: 3,
+                extraGap: 4,
+                pulseSpeedHz: 0.3,
+                pulseMin: 0.0,
+                connectRange: 2.0,
+                threshold: 1.0,
+                aa: 1.0
+            };
+            const WAVE = {
+                amp: 20,
+                sigma: 30,
+                lambda: 68,
+                freq: 1.2,
+                gamma: 1.0
+            };
+            const PLUCK = {
+                ratio: 0.001,
+                delayMs: 200,
+                speedThreshold: 60,
+                capEnable: true,
+                capPx: 550
+            };
+            const SPEEDBIND = {
+                capPx: 1600,
+                effect: 1.0,
+                ampDir: true,
+                sigDir: true,
+                lamDir: true,
+                fqDir: true,
+                gamDir: true
+            };
+            const SPRING = {
+                k: 60.0,
+                c: 8.0,
+                mass: 1.0,
+                gainRatio: 0.02,
+                maxImpulse: 500.0,
+                samplesPerStep: 3
+            };
+            const SCALE = {
+                k: 50.0,
+                c: 10.0,
+                mass: 1.0,
+                followGain: 6.0,
+                maxScale: 1.25
+            }; // 绝对倍率：基于初始 18
+            const AOE = {
+                maxCells: 200
+            };
+
+            // ★ 新增：回弹速度与鼠标速度的映射（越快 → 回得越慢）
+            //    - posKMin/sizeKMin：当速度达到 cap 时，弹簧刚度的最小比例（0.2~1）。越小越慢。
+            //    - recoverRate：每秒往回收敛到 1 的速度（越大，恢复越快）。
+            const REBOUND = {
+                enable: true,
+                posKMin: 0.35, // 位移弹簧在极高速时的最小刚度比例（保留果冻：与 c 一起按比例缩）
+                sizeKMin: 0.50, // 尺寸弹簧在极高速时的最小刚度比例（配合“落地锁”，只影响到达 1 之前的收敛）
+                recoverRate: 1.5 // s^-1，系数每秒向 1 恢复的速度
+            };
+
+            // —— 快速→停下的“安抚气泡” ——（让停下位置马上恢复正常回弹速度）
+            const STOP = {
+                high: 400, // 视为“上一帧很快”的阈值(px/s)
+                low: 80, // 视为“当前很慢/停”的阈值(px/s)
+                radiusCells: 1.5, // 光标附近 ~1.5 个格子的半径
+                velCut: 0.35 // 将位移速度瞬时衰减到原来的 35%
+            };
+
+            // —— 闲置自动收尾（清尾巴） —— 
+            const FADE = {
+                idleMs: 200, // 多久没被触发就判定为“闲置”
+                restDisp: 0.6, // 位移小于这个像素就算“很小”
+                restVel: 2.0, // 速度小于这个像素/秒就算“很小”
+                restScaleEps: 0.01 // 缩放距离 1 的绝对误差
+            };
+
+
+            // ★ 稍后会把 SCALE.c 提到略过阻尼，避免触 1 上下抖
+            {
+                const cCrit = 2 * Math.sqrt(SCALE.k * SCALE.mass);
+                SCALE.c = Math.max(SCALE.c, cCrit * 1.05);
+            }
+
+            const DPR = Math.min(2, window.devicePixelRatio || 1);
+            const glCanvas = document.getElementById('gl');
+            const fbCanvas = document.getElementById('fallback');
+            const errBox = document.getElementById('err');
+            const showErr = (m) => {
+                errBox.style.display = 'block';
+                errBox.textContent = m;
+                fbCanvas.style.zIndex = '1';
+            };
+
+            // ————————— WebGL —————————
+            const gl = glCanvas.getContext('webgl', {
+                antialias: false,
+                alpha: false
+            });
+            if (!gl) {
+                showErr('未启用 WebGL，已回退 Canvas2D。');
+                startFallback();
+                return;
+            }
+            if (!gl.getExtension('OES_texture_float')) {
+                showErr('需要 WebGL 扩展：OES_texture_float');
+                return;
+            }
+
+            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+            gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); // 坐标统一自下而上
+
+            const VERT = `
+    #ifdef GL_ES
+    precision highp float;
+    #endif
+    attribute vec2 a_pos;
+    void main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
+
+            const FRAG = `
+    #ifdef GL_ES
+      #ifdef GL_FRAGMENT_PRECISION_HIGH
+        precision highp float;
+      #else
+        precision mediump float;
+      #endif
+    #else
+      precision highp float;
+    #endif
+
+    uniform vec2  u_res;
+    uniform float u_time;
+
+    uniform vec2  u_half0;
+    uniform vec4  u_radius4;
+    uniform vec2  u_step;
+    uniform float u_pulseMin, u_pulseHz;
+    uniform float u_thresh, u_falloff, u_aa;
+    uniform float u_pulseOn;
+
+    uniform vec2  u_texSize;
+    uniform ivec2 u_gridMin;
+    uniform sampler2D u_dispTex;
+    uniform float u_scanR;
+
+    float sdRoundBoxCorners(vec2 p, vec2 b, vec4 r4){
+      vec2 s = sign(p);
+      float r = (s.x>0.0) ? ((s.y>0.0)? r4.x : r4.w)
+                          : ((s.y>0.0)? r4.y : r4.z);
+      r = clamp(r, 0.0, min(b.x,b.y)-1.0);
+      vec2 q = abs(p) - (b - vec2(r));
+      return length(max(q, vec2(0.0))) - r;
+    }
+
+    vec3 fetchDispScale(ivec2 ij){
+      ivec2 ij0 = ij - u_gridMin;
+      vec2 uv   = (vec2(ij0) + 0.5) / u_texSize;
+      return texture2D(u_dispTex, uv).rgb; // R=dx, G=dy, B=scaleAbs(>1)|0
+    }
+
+    void main(){
+      vec2 uv = gl_FragCoord.xy;
+      vec2 C  = u_res * 0.5;
+
+      float pulsePhase = 0.5 + 0.5 * sin(6.2831853 * u_pulseHz * u_time);
+      float pulseRun   = u_pulseMin + (1.0 - u_pulseMin) * pulsePhase;
+      float pulse      = mix(1.0, pulseRun, step(0.5, u_pulseOn)); // 关→1
+
+      float dmin = 1e6;
+      float insideF = 0.0;
+      float phi = 0.0;
+
+      const int MAX_SCAN = 20;
+      float jBase = floor((uv.y - C.y) / u_step.y + 0.5);
+      for(int jy=-MAX_SCAN; jy<=MAX_SCAN; jy++){
+        if (abs(float(jy)) > u_scanR) continue;
+        float j = jBase + float(jy);
+        float rowOff = mod(abs(j), 2.0) * 0.5;
+        float iBase = floor((uv.x - C.x - rowOff*u_step.x) / u_step.x + 0.5);
+        for(int ix=-MAX_SCAN; ix<=MAX_SCAN; ix++){
+          if (abs(float(ix)) > u_scanR) continue;
+
+          float i = iBase + float(ix);
+          vec2 center = vec2(C.x + (i + rowOff) * u_step.x,
+                             C.y +  j            * u_step.y);
+
+          vec3 ds = fetchDispScale(ivec2(int(i), int(j)));
+          center += ds.rg;
+
+          // 你当前的合成规则：有速度倍率就覆盖脉动（保持你的手感）
+          float sizeFactor = (ds.b > 0.0) ? max(pulse, ds.b) : pulse;
+
+          vec2 hSize  = u_half0 * sizeFactor;
+          vec4 r4     = u_radius4 * sizeFactor;
+          float d     = sdRoundBoxCorners(uv - center, hSize, r4);
+
+          dmin = min(dmin, d);
+          if(d <= 0.0) insideF = 1.0;
+          phi += exp(-u_falloff * max(d, 0.0));
+        }
+      }
+
+      float mask = (insideF > 0.5) ? 1.0 : step(u_thresh, phi);
+      float edge = clamp(1.0 - smoothstep(0.0, u_aa, dmin), 0.0, 1.0);
+      mask = max(mask, edge * 0.95);
+      gl_FragColor = vec4(vec3(mask), 1.0);
+    }`;
+
+            function compile(type, src) {
+                const s = gl.createShader(type);
+                gl.shaderSource(s, src);
+                gl.compileShader(s);
+                if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                    const log = gl.getShaderInfoLog(s) || '(empty log)';
+                    gl.deleteShader(s);
+                    throw new Error(log);
+                }
+                return s;
+            }
+            let prog;
+            try {
+                prog = gl.createProgram();
+                gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+                gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+                gl.linkProgram(prog);
+                if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+            } catch (e) {
+                showErr('WebGL 着色器失败：' + e.message + '。已回退 Canvas2D。');
+                startFallback();
+                return;
+            }
+            gl.useProgram(prog);
+
+            // 全屏三角
+            const buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+            const a_pos = gl.getAttribLocation(prog, 'a_pos');
+            gl.enableVertexAttribArray(a_pos);
+            gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+            // uniforms
+            const U = n => gl.getUniformLocation(prog, n);
+            const u_res = U('u_res'),
+                u_time = U('u_time');
+            const u_half0 = U('u_half0'),
+                u_radius4 = U('u_radius4'),
+                u_step = U('u_step');
+            const u_pulseMin = U('u_pulseMin'),
+                u_pulseHz = U('u_pulseHz'),
+                u_pulseOn = U('u_pulseOn');
+            const u_thresh = U('u_thresh'),
+                u_falloff = U('u_falloff'),
+                u_aa = U('u_aa');
+            const u_dispTex = U('u_dispTex'),
+                u_texSize = U('u_texSize'),
+                u_gridMin = U('u_gridMin');
+            const u_scanR = U('u_scanR');
+
+            function syncStatics() {
+                gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
+                const r = CFG.corner * DPR;
+                gl.uniform4f(u_radius4, r, 0.0, r, 0.0);
+                gl.uniform1f(u_pulseMin, CFG.pulseMin);
+                gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+                gl.uniform1f(u_pulseOn, 1.0);
+                gl.uniform1f(u_thresh, CFG.threshold);
+                gl.uniform1f(u_aa, CFG.aa * DPR);
+                const k = Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR);
+                gl.uniform1f(u_falloff, k);
+                syncStep();
+            }
+
+            function syncStep() {
+                const s = CFG.size * DPR;
+                const stepX = s * 2.0 + CFG.extraGap * 2 * DPR;
+                const stepY = s + CFG.extraGap * DPR;
+                gl.uniform2f(u_step, stepX, stepY);
+                initSpringField();
+                syncSpringUniforms();
+            }
+
+            function resize() {
+                const w = Math.floor(innerWidth * DPR),
+                    h = Math.floor(innerHeight * DPR);
+                glCanvas.width = w;
+                glCanvas.height = h;
+                glCanvas.style.width = innerWidth + 'px';
+                glCanvas.style.height = innerHeight + 'px';
+                gl.viewport(0, 0, w, h);
+                gl.uniform2f(u_res, w, h);
+                initSpringField();
+                syncSpringUniforms();
+            }
+            addEventListener('resize', resize);
+
+            // —— 每格弹簧场 —— 
+            let cols = 0,
+                rows = 0,
+                iMin = 0,
+                jMin = 0;
+            let dispArray = null,
+                velArray = null;
+            let scaleArray = null,
+                scaleVelArray = null,
+                scaleLock = null; // ★ 新增：锁
+            let posKFactor = null,
+                sizeKFactor = null; // ★ 新增：回弹速度因子
+            let dispTex = null;
+
+            function gridMetrics() {
+                const s = CFG.size * DPR;
+                return {
+                    stepX: s * 2.0 + CFG.extraGap * 2 * DPR,
+                    stepY: s + CFG.extraGap * DPR
+                };
+            }
+
+            function initSpringField() {
+                const w = glCanvas.width,
+                    h = glCanvas.height;
+
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const iSpan = Math.ceil((w / stepX) + 6);
+                const jSpan = Math.ceil((h / stepY) + 6);
+                iMin = -iSpan;
+                jMin = -jSpan;
+                const iMax = iSpan,
+                    jMax = jSpan;
+                cols = iMax - iMin + 1;
+                rows = jMax - jMin + 1;
+
+                lastTouch = new Float64Array(cols * rows); // 初始全 0
+                dispArray = new Float32Array(cols * rows * 2);
+                velArray = new Float32Array(cols * rows * 2);
+                scaleArray = new Float32Array(cols * rows);
+                scaleVelArray = new Float32Array(cols * rows);
+                scaleLock = new Uint8Array(cols * rows); // ★ 新增：默认 0=未锁
+                posKFactor = new Float32Array(cols * rows); // ★ 新增：默认 1
+                sizeKFactor = new Float32Array(cols * rows); // ★ 新增：默认 1
+                for (let q = 0; q < cols * rows; q++) {
+                    scaleArray[q] = 1.0;
+                    posKFactor[q] = 1.0;
+                    sizeKFactor[q] = 1.0;
+                }
+
+                if (!dispTex) dispTex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, dispTex);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols, rows, 0, gl.RGBA, gl.FLOAT, new Float32Array(cols *
+                    rows * 4));
+            }
+
+            function syncSpringUniforms() {
+                gl.uniform2f(u_texSize, cols, rows);
+                gl.uniform2i(u_gridMin, iMin, jMin);
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, dispTex);
+                gl.uniform1i(u_dispTex, 0);
+            }
+            const idx2 = (i, j) => {
+                const ii = i - iMin,
+                    jj = j - jMin;
+                if (ii < 0 || ii >= cols || jj < 0 || jj >= rows) return -1;
+                return (jj * cols + ii);
+            };
+            const idx = (i, j) => {
+                const base = idx2(i, j);
+                return base < 0 ? -1 : base * 2;
+            };
+
+            function nearestIndex(x, y) {
+                const w = glCanvas.width,
+                    h = glCanvas.height;
+                const Cx = w * 0.5,
+                    Cy = h * 0.5;
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const j = Math.floor((y - Cy) / stepY + 0.5);
+                const ro = (Math.abs(j) % 2) * 0.5;
+                const i = Math.floor((x - Cx - ro * stepX) / stepX + 0.5);
+                return {
+                    i,
+                    j
+                };
+            }
+
+            function centerOf(i, j) {
+                const w = glCanvas.width,
+                    h = glCanvas.height;
+                const Cx = w * 0.5,
+                    Cy = h * 0.5;
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const ro = (Math.abs(j) % 2) * 0.5;
+                return {
+                    cx: Cx + (i + ro) * stepX,
+                    cy: Cy + j * stepY
+                };
+            }
+
+            function stepSprings() {
+                const now = performance.now() * 0.001;
+                const dtRaw = now - (stepSprings._t || now);
+                stepSprings._t = now;
+                let dt = Math.min(Math.max(dtRaw, 1 / 120), 1 / 30);
+
+                // —— 位移弹簧（果冻）：按每格 posKFactor 缩放 k、c（保持阻尼比不变）——
+                const invM = 1.0 / SPRING.mass;
+                for (let j = 0; j < rows; j++) {
+                    for (let i = 0; i < cols; i++) {
+                        const p = (j * cols + i) * 2,
+                            base = j * cols + i;
+                        let x = dispArray[p],
+                            y = dispArray[p + 1];
+                        let vx = velArray[p],
+                            vy = velArray[p + 1];
+
+                        const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, posKFactor[base])) : 1.0; // 保护
+                        const kEff = SPRING.k * fac;
+                        const cEff = SPRING.c * Math.sqrt(fac); // 保持 ζ = c/(2√(km)) 不变 → 手感一致，只是时间尺度放慢
+
+                        const ax = (-kEff * x - cEff * vx) * invM;
+                        const ay = (-kEff * y - cEff * vy) * invM;
+                        vx += ax * dt;
+                        x += vx * dt;
+                        vy += ay * dt;
+                        y += vy * dt;
+
+                        dispArray[p] = x;
+                        dispArray[p + 1] = y;
+                        velArray[p] = vx;
+                        velArray[p + 1] = vy;
+
+                        // ★ 回弹速度缓慢恢复：因子 → 1
+                        if (REBOUND.enable) {
+                            const r = Math.min(1.0, REBOUND.recoverRate * dt);
+                            posKFactor[base] += (1.0 - posKFactor[base]) * r;
+                        }
+                    }
+                }
+
+                // —— 尺寸弹簧（回到 1.0）：落地即锁 + 回弹速度因子（仅未锁时生效）——
+                const invMs = 1.0 / SCALE.mass;
+                for (let j = 0; j < rows; j++) {
+                    for (let i = 0; i < cols; i++) {
+                        const base = j * cols + i;
+
+                        if (scaleLock[base]) { // 已锁：保持 1，不再积分
+                            scaleArray[base] = 1.0;
+                            scaleVelArray[base] = 0.0;
+                            // 因子也往回收
+                            if (REBOUND.enable) {
+                                const r = Math.min(1.0, REBOUND.recoverRate * dt);
+                                sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
+                            }
+                            continue;
+                        }
+
+                        let s = scaleArray[base];
+                        let vs = scaleVelArray[base];
+
+                        const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, sizeKFactor[base])) : 1.0;
+                        const kEff = SCALE.k * fac;
+                        // 稍过阻尼：cEff ~ 1.05*cCrit(kEff)
+                        const cEff = (2 * Math.sqrt(kEff * SCALE.mass)) * 1.05;
+
+                        const ds = (1.0 - s);
+                        const as = (kEff * ds - cEff * vs) * invMs;
+                        vs += as * dt;
+
+                        const sNext = s + vs * dt;
+
+                        // ★ 第一次穿过 1（向下）→ 落地锁住
+                        if (s > 1.0 && sNext <= 1.0 && vs < 0.0) {
+                            s = 1.0;
+                            vs = 0.0;
+                            scaleLock[base] = 1;
+                        } else {
+                            s = sNext;
+                        }
+
+                        s = Math.max(0.2, Math.min(3.0, s));
+                        vs = Math.max(-1000, Math.min(1000, vs));
+
+                        scaleArray[base] = s;
+                        scaleVelArray[base] = vs;
+
+                        if (REBOUND.enable) {
+                            const r = Math.min(1.0, REBOUND.recoverRate * dt);
+                            sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
+                        }
+                    }
+                }
+
+                // —— 闲置自动收尾：长时间未触碰且已接近静止 → 强制归零 —— 
+                {
+                    const now = performance.now() * 0.001;
+                    for (let j = 0; j < rows; j++) {
+                        for (let i = 0; i < cols; i++) {
+                            const base = j * cols + i;
+                            // 未触碰过或刚触碰过不处理
+                            if (now - (lastTouch[base] || 0) < FADE.idleMs * 0.001) continue;
+
+                            const p = base * 2;
+                            const x = dispArray[p],
+                                y = dispArray[p + 1];
+                            const vx = velArray[p],
+                                vy = velArray[p + 1];
+                            const s = scaleArray[base],
+                                vs = scaleVelArray[base];
+
+                            const almostStill =
+                                Math.abs(x) < FADE.restDisp && Math.abs(y) < FADE.restDisp &&
+                                Math.abs(vx) < FADE.restVel && Math.abs(vy) < FADE.restVel &&
+                                Math.abs(s - 1.0) < FADE.restScaleEps && Math.abs(vs) < 0.5;
+
+                            if (almostStill) {
+                                // 位移归零、速度清零、缩放落地锁
+                                dispArray[p] = 0;
+                                dispArray[p + 1] = 0;
+                                velArray[p] = 0;
+                                velArray[p + 1] = 0;
+                                scaleArray[base] = 1.0;
+                                scaleVelArray[base] = 0.0;
+                                scaleLock[base] = 1;
+                                posKFactor[base] = 1.0;
+                                sizeKFactor[base] = 1.0;
+                                // 重置时间戳，避免重复判断
+                                lastTouch[base] = now;
+                            }
+                        }
+                    }
+                }
+
+
+                // —— 写纹理：RG=位移，B=绝对倍率(>1)|0（锁住后强制 0），A=1 —— 
+                const tex = new Float32Array(cols * rows * 4);
+                for (let j = 0; j < rows; j++) {
+                    for (let i = 0; i < cols; i++) {
+                        const base = j * cols + i,
+                            p2 = base * 2,
+                            p4 = base * 4;
+                        tex[p4] = dispArray[p2];
+                        tex[p4 + 1] = dispArray[p2 + 1];
+                        const sAbs = scaleArray[base];
+                        tex[p4 + 2] = (!scaleLock[base] && sAbs > 1.01) ? sAbs : 0.0; // ★ 锁后不再点亮 B
+                        tex[p4 + 3] = 1.0;
+                    }
+                }
+                gl.bindTexture(gl.TEXTURE_2D, dispTex);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.FLOAT, tex);
+
+                // 动态扫描半径（按当前最大位移推一个最小扫描圈）
+                let maxD = 0;
+                for (let j = 0; j < rows; j++) {
+                    for (let i = 0; i < cols; i++) {
+                        const p2 = (j * cols + i) * 2;
+                        const d = Math.hypot(dispArray[p2], dispArray[p2 + 1]);
+                        if (d > maxD) maxD = d;
+                    }
+                }
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const stepMin = Math.min(stepX, stepY);
+                const rCellsNeeded = Math.ceil(maxD / stepMin) + 1;
+                const MAX_SCAN_JS = 20;
+                gl.uniform1f(u_scanR, Math.min(rCellsNeeded, MAX_SCAN_JS));
+            }
+
+            const cellsToRadiusCells = (n) => Math.max(0.5, Math.sqrt(Math.max(1, n) / Math.PI));
+
+            function injectAOE(x, y, speed, vx, vy) {
+                // 归一速度（用 SPEEDBIND.capPx 做参考）
+                const sCap = Math.max(1, SPEEDBIND.capPx);
+                const s01 = Math.max(0, Math.min(1, speed / sCap));
+
+                const speedForImpulse = PLUCK.capEnable ? Math.min(speed, PLUCK.capPx) : speed;
+                const gainBase = Math.min(SPRING.maxImpulse, speedForImpulse * SPRING.gainRatio);
+                const dirx = vx / (speed + 1e-6),
+                    diry = vy / (speed + 1e-6);
+
+                const mulAbs = 1.0 + s01 * (SCALE.maxScale - 1.0);
+
+                const targetCells = 1 + Math.floor(s01 * (AOE.maxCells - 1));
+                const rCells = cellsToRadiusCells(targetCells);
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const unit = Math.min(stepX, stepY);
+                const rPx = rCells * unit;
+
+                const {
+                    i: ic,
+                    j: jc
+                } = nearestIndex(x, y);
+                const rI = Math.ceil(rPx / stepX) + 1;
+                const rJ = Math.ceil(rPx / stepY) + 1;
+
+                // ★ 由速度映射回弹“慢化”系数：越快 → 因子越小 → k 变小 → 回得更慢
+                const posFac = REBOUND.enable ? (1.0 - s01 * (1.0 - REBOUND.posKMin)) : 1.0;
+                const sizeFac = REBOUND.enable ? (1.0 - s01 * (1.0 - REBOUND.sizeKMin)) : 1.0;
+
+                for (let dj = -rJ; dj <= rJ; dj++) {
+                    const j = jc + dj;
+                    for (let di = -rI; di <= rI; di++) {
+                        const i = ic + di;
+                        const base = idx2(i, j);
+                        if (base < 0) continue;
+                        const p = base * 2;
+                        const {
+                            cx,
+                            cy
+                        } = centerOf(i, j);
+                        const dx = cx - x,
+                            dy = cy - y;
+                        const d = Math.hypot(dx, dy);
+                        if (d > rPx) continue;
+
+                        const t = d / rPx;
+                        const w = 1.0 - (t * t * (3.0 - 2.0 * t)); // smoothstep 权重
+
+                        // 位移注入（果冻）
+                        velArray[p] += dirx * (gainBase * w);
+                        velArray[p + 1] += diry * (gainBase * w);
+
+                        // ★ 解锁尺寸，允许再次被放大
+                        scaleLock[base] = 0;
+
+                        // 记录最近触摸时间（秒）
+                        lastTouch[base] = performance.now() * 0.001;
+
+
+                        // 尺寸跟随（目标绝对倍率 mulAbs）
+                        const s = scaleArray[base];
+                        const err = (mulAbs - s);
+                        const push = SCALE.followGain * err * w;
+                        const maxPush = 2.0;
+                        scaleVelArray[base] += Math.max(-maxPush, Math.min(maxPush, push));
+
+                        // ★ 更新每格回弹速度因子（取“更慢”的那个；释放时会慢慢恢复到 1）
+                        posKFactor[base] = Math.min(posKFactor[base], posFac);
+                        sizeKFactor[base] = Math.min(sizeKFactor[base], sizeFac);
+                    }
+                }
+            }
+
+            function injectPathImpulse(x0, y0, x1, y1, speed, vx, vy) {
+                const steps = Math.max(1, SPRING.samplesPerStep * Math.max(
+                    Math.abs(x1 - x0) / (CFG.size * DPR),
+                    Math.abs(y1 - y0) / (CFG.size * DPR)
+                ));
+                for (let k = 0; k <= steps; k++) {
+                    const t = k / steps;
+                    const x = x0 + (x1 - x0) * t;
+                    const y = y0 + (y1 - y0) * t;
+                    injectAOE(x, y, speed, vx, vy);
+                }
+            }
+
+            function settleBubble(x, y) {
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const unit = Math.min(stepX, stepY);
+                const rPx = STOP.radiusCells * unit;
+
+                const {
+                    i: ic,
+                    j: jc
+                } = nearestIndex(x, y);
+                const rI = Math.ceil(rPx / stepX) + 1;
+                const rJ = Math.ceil(rPx / stepY) + 1;
+
+                for (let dj = -rJ; dj <= rJ; dj++) {
+                    const j = jc + dj;
+                    for (let di = -rI; di <= rI; di++) {
+                        const i = ic + di;
+                        const base = idx2(i, j);
+                        if (base < 0) continue;
+                        const p = base * 2;
+
+                        const {
+                            cx,
+                            cy
+                        } = centerOf(i, j);
+                        const dx = cx - x,
+                            dy = cy - y;
+                        if (Math.hypot(dx, dy) > rPx) continue;
+
+                        // 1) 回弹因子立刻恢复到 1（马上按正常速度回）
+                        posKFactor[base] = 1.0;
+                        sizeKFactor[base] = 1.0;
+
+                        // 2) 位移速度削一下尖刺
+                        velArray[p] *= STOP.velCut;
+                        velArray[p + 1] *= STOP.velCut;
+
+                        // 3) 缩放接近 1 则直接落地锁住
+                        if (Math.abs(scaleArray[base] - 1.0) <= FADE.restScaleEps) {
+                            scaleArray[base] = 1.0;
+                            scaleVelArray[base] = 0.0;
+                            scaleLock[base] = 1;
+                        }
+
+                        // 更新触摸时间，避免立刻被“闲置收尾”误伤
+                        lastTouch[base] = performance.now() * 0.001;
+                    }
+                }
+            }
+
+
+            // 交互
+            let pluckOn = true,
+                pulseOn = true;
+            let savedPulseMin = CFG.pulseMin;
+            const btnPulse = document.getElementById('pulse');
+            const btnPluck = document.getElementById('pluck');
+
+            btnPulse.onclick = () => {
+                pulseOn = !pulseOn;
+                btnPulse.setAttribute('aria-pressed', pulseOn);
+                btnPulse.textContent = `脉动：${pulseOn?'开':'关'} (P)`;
+                if (pulseOn) {
+                    gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+                    gl.uniform1f(u_pulseMin, savedPulseMin);
+                    gl.uniform1f(u_pulseOn, 1.0);
+                } else {
+                    gl.uniform1f(u_pulseHz, 0.0);
+                    gl.uniform1f(u_pulseMin, 1.0);
+                    gl.uniform1f(u_pulseOn, 0.0);
+                }
+            };
+            btnPluck.onclick = () => {
+                pluckOn = !pluckOn;
+                btnPluck.setAttribute('aria-pressed', pluckOn);
+                btnPluck.textContent = `拨动：${pluckOn?'开':'关'} (O)`;
+            };
+            addEventListener('keydown', e => {
+                if (e.key === 'p' || e.key === 'P') btnPulse.click();
+                if (e.key === 'o' || e.key === 'O') btnPluck.click();
+            });
+
+            // UI 绑定（与你现版一致 + 小笔误修）
+            const id = x => document.getElementById(x);
+            const sizeR = id('sizeRange'),
+                gapR = id('gapRange'),
+                radR = id('radiusRange'),
+                spdR = id('speedRange'),
+                crR = id('crRange'),
+                thR = id('thRange'),
+                sigR = id('sigRange'),
+                lamR = id('lamRange'),
+                fqR = id('fqRange'),
+                gamR = id('gamRange'),
+                ratioR = id('ratioRange'),
+                delayR = id('delayRange'),
+                speedCapR = id('speedCapRange'),
+                speedEffR = id('speedEffRange'),
+                maxCellsR = id('maxCellsRange'),
+                maxScaleR = id('maxScaleRange'),
+                pluckCapR = id('pluckCapRange');
+            const vSize = id('vSize'),
+                vGap = id('vGap'),
+                vRad = id('vRadius'),
+                vSpd = id('vSpeed'),
+                vCR = id('vCR'),
+                vTh = id('vTh'),
+                vSig = id('vSig'),
+                vLam = id('vLam'),
+                vFq = id('vFq'),
+                vGam = id('vGam'),
+                vRatio = id('vRatio'),
+                vDelay = id('vDelay'),
+                vSCap = id('vSCap'),
+                vSEff = id('vSEff'),
+                vMS = id('vMS'),
+                vMaxCells = id('vMaxCells'),
+                vMaxScale = id('vMaxScale'),
+                vPluckCap = id('vPluckCap');
+            const capToggle = document.getElementById('capToggle');
+
+            function initSliders() {
+                sizeR.value = CFG.size;
+                vSize.textContent = CFG.size + ' px';
+                gapR.value = CFG.extraGap;
+                vGap.textContent = CFG.extraGap + ' px'; // ★ 修正 textContent
+                radR.value = CFG.corner;
+                vRad.textContent = CFG.corner + ' px';
+                spdR.value = CFG.pulseSpeedHz;
+                vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + ' Hz';
+                crR.value = CFG.connectRange;
+                vCR.textContent = CFG.connectRange.toFixed(1) + ' px';
+                thR.value = CFG.threshold;
+                vTh.textContent = CFG.threshold.toFixed(2);
+
+                sigR.value = WAVE.sigma;
+                vSig.textContent = WAVE.sigma.toFixed(0) + ' px';
+                lamR.value = WAVE.lambda;
+                vLam.textContent = WAVE.lambda.toFixed(0) + ' px';
+                fqR.value = WAVE.freq;
+                vFq.textContent = WAVE.freq.toFixed(2) + ' Hz';
+                gamR.value = WAVE.gamma;
+                vGam.textContent = WAVE.gamma.toFixed(2);
+
+                ratioR.value = PLUCK.ratio;
+                vRatio.textContent = PLUCK.ratio.toFixed(3);
+                delayR.value = PLUCK.delayMs;
+                vDelay.textContent = PLUCK.delayMs + ' ms';
+
+                speedCapR.value = SPEEDBIND.capPx;
+                vSCap.textContent = SPEEDBIND.capPx + ' px/s';
+                speedEffR.value = SPEEDBIND.effect;
+                vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+                maxCellsR.value = AOE.maxCells;
+                vMaxCells.textContent = AOE.maxCells.toString();
+                maxScaleR.value = SCALE.maxScale;
+                vMaxScale.textContent = SCALE.maxScale.toFixed(2) + '×';
+
+                pluckCapR.value = PLUCK.capPx;
+                vPluckCap.textContent = PLUCK.capPx + ' px/s';
+                capToggle.setAttribute('aria-pressed', PLUCK.capEnable);
+                capToggle.textContent = `拨动限速：${PLUCK.capEnable?'开':'关'}`;
+
+                vMS.textContent = '0 px/s';
+            }
+            sizeR.oninput = () => {
+                CFG.size = +sizeR.value;
+                vSize.textContent = CFG.size + ' px';
+                syncStatics();
+            };
+            gapR.oninput = () => {
+                CFG.extraGap = +gapR.value;
+                vGap.textContent = CFG.extraGap + ' px';
+                syncStep();
+            };
+            radR.oninput = () => {
+                CFG.corner = +radR.value;
+                vRad.textContent = CFG.corner + ' px';
+                syncStatics();
+            };
+            spdR.oninput = () => {
+                CFG.pulseSpeedHz = +spdR.value;
+                vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + ' Hz';
+                gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+            };
+            crR.oninput = () => {
+                CFG.connectRange = +crR.value;
+                vCR.textContent = CFG.connectRange.toFixed(1) + ' px';
+                gl.uniform1f(u_falloff, Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR));
+            };
+            thR.oninput = () => {
+                CFG.threshold = +thR.value;
+                vTh.textContent = CFG.threshold.toFixed(2);
+                gl.uniform1f(u_thresh, CFG.threshold);
+            };
+            sigR.oninput = () => {
+                WAVE.sigma = +sigR.value;
+                vSig.textContent = WAVE.sigma.toFixed(0) + ' px';
+            };
+            lamR.oninput = () => {
+                WAVE.lambda = +lamR.value;
+                vLam.textContent = WAVE.lambda.toFixed(0) + ' px';
+            };
+            fqR.oninput = () => {
+                WAVE.freq = +fqR.value;
+                vFq.textContent = WAVE.freq.toFixed(2) + ' Hz';
+            };
+            gamR.oninput = () => {
+                WAVE.gamma = +gamR.value;
+                vGam.textContent = WAVE.gamma.toFixed(2);
+            };
+            ratioR.oninput = () => {
+                PLUCK.ratio = +ratioR.value;
+                vRatio.textContent = PLUCK.ratio.toFixed(3);
+            };
+            delayR.oninput = () => {
+                PLUCK.delayMs = +delayR.value;
+                vDelay.textContent = PLUCK.delayMs + ' ms';
+            };
+            speedCapR.oninput = () => {
+                SPEEDBIND.capPx = +speedCapR.value;
+                vSCap.textContent = SPEEDBIND.capPx + ' px/s';
+            };
+            speedEffR.oninput = () => {
+                SPEEDBIND.effect = +speedEffR.value;
+                vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+            };
+            maxCellsR.oninput = () => {
+                AOE.maxCells = +maxCellsR.value;
+                vMaxCells.textContent = AOE.maxCells.toString();
+            };
+            maxScaleR.oninput = () => {
+                SCALE.maxScale = +maxScaleR.value;
+                vMaxScale.textContent = SCALE.maxScale.toFixed(2) + '×';
+            };
+            pluckCapR.oninput = () => {
+                PLUCK.capPx = +pluckCapR.value;
+                vPluckCap.textContent = PLUCK.capPx + ' px/s';
+            };
+            capToggle.onclick = () => {
+                PLUCK.capEnable = !PLUCK.capEnable;
+                capToggle.setAttribute('aria-pressed', PLUCK.capEnable);
+                capToggle.textContent = `拨动限速：${PLUCK.capEnable?'开':'关'}`;
+            };
+
+            // 鼠标（自下而上坐标）
+            const mouse = {
+                x: 0,
+                y: 0,
+                t: 0
+            };
+            let instSpeed = 0,
+                smoothSpeed = 0;
+
+            addEventListener('pointermove', e => {
+                const rect = glCanvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * DPR;
+                const y = glCanvas.height - (e.clientY - rect.top) * DPR;
+
+                const now = performance.now() * 0.001;
+                const dt = Math.max(1e-3, now - (mouse.t || now));
+                const vx = (x - (mouse.x || x)) / dt,
+                    vy = (y - (mouse.y || y)) / dt;
+                instSpeed = Math.hypot(vx, vy);
+                smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
+                document.getElementById('vMS').textContent = Math.round(smoothSpeed) + ' px/s';
+
+                // —— 快速→慢/停：触发安抚 —— 
+                if (pluckOn) {
+                    const wasFast = (window.__prevSpeed || 0) > STOP.high;
+                    const nowSlow = instSpeed < STOP.low;
+                    if (wasFast && nowSlow) {
+                        settleBubble(x, y);
+                    }
+                    window.__prevSpeed = instSpeed;
+                }
+
+                if (pluckOn) {
+                    if (instSpeed > PLUCK.speedThreshold || (now - (mouse.t || 0)) > 0.08) {
+                        injectPathImpulse(mouse.x || x, mouse.y || y, x, y, instSpeed, vx, vy);
+                    }
+                }
+                mouse.x = x;
+                mouse.y = y;
+                mouse.t = now;
+            }, {
+                passive: true
+            });
+
+            addEventListener('pointerdown', e => {
+                const rect = glCanvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * DPR;
+                const y = glCanvas.height - (e.clientY - rect.top) * DPR;
+                mouse.x = x;
+                mouse.y = y;
+                mouse.t = performance.now() * 0.001;
+                injectAOE(x, y, 800, 1, 0);
+            }, {
+                passive: true
+            });
+
+            // 渲染
+            let t0 = performance.now();
+
+            function frame() {
+                stepSprings();
+                gl.clearColor(0, 0, 0, 1);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.uniform1f(u_time, (performance.now() - t0) * 0.001);
+                gl.drawArrays(gl.TRIANGLES, 0, 3);
+                requestAnimationFrame(frame);
+            }
+
+            function boot() {
+                resize();
+                syncStatics();
+                initSliders();
+                frame();
+            }
+            boot();
+
+            // 备用 Canvas2D（省略拨动）
+            function startFallback() {
+                const ctx = fbCanvas.getContext('2d');
+
+                function resize2() {
+                    fbCanvas.width = innerWidth;
+                    fbCanvas.height = innerHeight;
+                }
+
+                function rr4(ctx, x, y, w, h, rTR, rTL, rBL, rBR) {
+                    const rr = v => Math.max(0, Math.min(v, Math.min(w, h) / 2 - 0.5));
+                    rTR = rr(rTR);
+                    rTL = rr(rTL);
+                    rBL = rr(rBL);
+                    rBR = rr(rBR);
+                    ctx.beginPath();
+                    ctx.moveTo(x + rTL, y);
+                    ctx.lineTo(x + w - rTR, y);
+                    ctx.arcTo(x + w, y, x + w, y + rTR, rTR);
+                    ctx.lineTo(x + w, y + h - rBR);
+                    ctx.arcTo(x + w, y + h, x + w - rBR, y + h, rBR);
+                    ctx.lineTo(x + rBL, y + h);
+                    ctx.arcTo(x, y + h, x, y + h - rBL, rBL);
+                    ctx.lineTo(x, y + rTL);
+                    ctx.arcTo(x, y, x + rTL, y, rTL);
+                    ctx.closePath();
+                }
+
+                function draw() {
+                    ctx.clearRect(0, 0, fbCanvas.width, fbCanvas.height);
+                    const s = CFG.size,
+                        gap = CFG.extraGap;
+                    const stepX = s * 2 + gap,
+                        stepY = s + gap;
+                    const cx = fbCanvas.width / 2,
+                        cy = fbCanvas.height / 2;
+                    const t = (performance.now() * 0.001) * CFG.pulseSpeedHz * 2 * Math.PI;
+                    const k = CFG.pulseMin + (1 - CFG.pulseMin) * (0.5 + 0.5 * Math.sin(t));
+                    const half = s * 0.5 * k,
+                        r = Math.min(CFG.corner * k, half - 0.5);
+                    ctx.fillStyle = '#fff';
+                    for (let j = -1000; j <= 1000; j++) {
+                        const rowOff = (Math.abs(j) % 2) * 0.5;
+                        const y = cy + j * stepY;
+                        if (y < -s * 2 || y > fbCanvas.height + s * 2) continue;
+                        for (let i = -1000; i <= 1000; i++) {
+                            const x = cx + (i + rowOff) * stepX;
+                            if (x < -s * 2 || x > fbCanvas.width + s * 2) continue;
+                            rr4(ctx, x - half, y - half, half * 2, half * 2, r, 0, r, 0);
+                            ctx.fill();
+                        }
+                    }
+                    requestAnimationFrame(draw);
+                }
+                addEventListener('resize', resize2);
+                resize2();
+                draw();
+            }
+        })();
+    </script>
+</body>
+
+</html>

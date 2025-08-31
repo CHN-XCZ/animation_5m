@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Slime + Magnet (three.js)</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: #0b0f14;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* 小提示角标，可删 */
+        .hint {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            color: #9ab;
+            font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            opacity: .75;
+            user-select: none;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="hint">拖动鼠标：磁铁拉扯史莱姆 · 无交互时趋向矩形形态</div>
+
+    <!-- 你的动画脚本（只有这一处引入） -->
+    <script type="module" src="./app1.js"></script>
+    <!-- <script type="module" src="./app.js"></script> -->
+</body>
+
+</html>
