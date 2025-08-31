@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>满屏粘连方块 · 尺寸落地锁 + 回弹随速度</title>
+    <title>满屏粘连方块 · 脉动样式单选 + 行波/向心</title>
     <style>
         html,
         body {
@@ -152,7 +152,7 @@
 
         <div class="panel">
             <label>影响范围最大格数 <span id="vMaxCells" class="val"></span><input id="maxCellsRange" type="range" min="80"
-                    max="200" step="1" /></label>
+                    max="2000" step="1" /></label>
             <label>速度放大倍率上限 <span id="vMaxScale" class="val"></span><input id="maxScaleRange" type="range" min="1.0"
                     max="3.0" step="0.01" /></label>
         </div>
@@ -162,15 +162,38 @@
             <label>拨动速度硬上限(px/s) <span id="vPluckCap" class="val"></span><input id="pluckCapRange" type="range"
                     min="200" max="4000" step="10" /></label>
         </div>
+
+        <!-- ★ 新增：脉动样式 + 脉动波长 -->
+        <div class="panel">
+            <fieldset style="display:flex;gap:12px;align-items:center;border:none;padding:0;margin:0">
+                <legend style="color:#cdd6f4;font:600 12px/1 ui-sans-serif,system-ui;opacity:.95">脉动样式</legend>
+                <label><input type="radio" name="pulseMode" value="1" checked> 左下→右上 行波</label>
+                <label><input type="radio" name="pulseMode" value="2"> 对角向中心往复</label>
+            </fieldset>
+            <label>脉动波长λ(px) <span id="vPulseLam" class="val"></span>
+                <input id="pulseLamRange" type="range" min="40" max="800" step="1" />
+            </label>
+        </div>
+
+        <!-- 闲置速收尾 + 水滴 AOE（保留你的上一版面板） -->
+        <div class="panel">
+            <label>闲置收尾强度 <span id="vFadeRate" class="val"></span><input id="fadeRateRange" type="range" min="0"
+                    max="100" step="0.1" /></label>
+            <label>AOE速度下限 <span id="vSpeedMin" class="val"></span><input id="speedMinRange" type="range" min="10"
+                    max="300" step="5" /></label>
+            <label>水滴前伸 <span id="vDropFront" class="val"></span><input id="dropFrontRange" type="range" min="0" max="2"
+                    step="0.05" /></label>
+            <label>水滴横向挤压 <span id="vDropSqueeze" class="val"></span><input id="dropSqueezeRange" type="range" min="0"
+                    max="0.8" step="0.02" /></label>
+        </div>
     </div>
 
     <div id="err" class="err"></div>
 
     <script>
         (() => {
-            let lastTouch = null; // Float64Array，记录每格最后被注入/触摸的时间（秒）
 
-            // —— 你的当前参数（原样保留） ——
+            // 你的现有参数（保持一致）
             const CFG = {
                 size: 18,
                 corner: 3,
@@ -218,39 +241,48 @@
                 mass: 1.0,
                 followGain: 6.0,
                 maxScale: 1.25
-            }; // 绝对倍率：基于初始 18
+            };
             const AOE = {
                 maxCells: 200
             };
 
-            // ★ 新增：回弹速度与鼠标速度的映射（越快 → 回得越慢）
-            //    - posKMin/sizeKMin：当速度达到 cap 时，弹簧刚度的最小比例（0.2~1）。越小越慢。
-            //    - recoverRate：每秒往回收敛到 1 的速度（越大，恢复越快）。
             const REBOUND = {
                 enable: true,
-                posKMin: 0.35, // 位移弹簧在极高速时的最小刚度比例（保留果冻：与 c 一起按比例缩）
-                sizeKMin: 0.50, // 尺寸弹簧在极高速时的最小刚度比例（配合“落地锁”，只影响到达 1 之前的收敛）
-                recoverRate: 1.5 // s^-1，系数每秒向 1 恢复的速度
+                posKMin: 0.35,
+                sizeKMin: 0.50,
+                recoverRate: 1.5
             };
-
-            // —— 快速→停下的“安抚气泡” ——（让停下位置马上恢复正常回弹速度）
             const STOP = {
-                high: 400, // 视为“上一帧很快”的阈值(px/s)
-                low: 80, // 视为“当前很慢/停”的阈值(px/s)
-                radiusCells: 1.5, // 光标附近 ~1.5 个格子的半径
-                velCut: 0.35 // 将位移速度瞬时衰减到原来的 35%
+                high: 400,
+                low: 80,
+                radiusCells: 1.5,
+                velCut: 0.35
             };
-
-            // —— 闲置自动收尾（清尾巴） —— 
             const FADE = {
-                idleMs: 200, // 多久没被触发就判定为“闲置”
-                restDisp: 0.6, // 位移小于这个像素就算“很小”
-                restVel: 2.0, // 速度小于这个像素/秒就算“很小”
-                restScaleEps: 0.01 // 缩放距离 1 的绝对误差
+                idleMs: 200,
+                forceRate: 8.0,
+                restDisp: 0.6,
+                restVel: 2.0,
+                restScaleEps: 0.01
             };
 
+            // ★ 新增：脉动样式配置
+            const PULSEFX = {
+                mode: 1, // 1=行波(左下→右上)，2=对角向中心往复
+                lambdaPx: 240 // 脉动波长（像素）
+            };
 
-            // ★ 稍后会把 SCALE.c 提到略过阻尼，避免触 1 上下抖
+            // ★ 新增：水滴（保留）
+            const DROP = {
+                speedMin: 50,
+                front: 1.30,
+                squeeze: 0.35,
+                singleTail: true, // 开关：用单尾水滴形状
+                headRatio: 0.55, // 前端“圆头”的相对半径（占 rPx 的比例）
+                tailTaper: 0.75 // 尾巴横向收缩强度（0~1，越大越尖）
+            };
+
+            // ——（后面全部是你上一版逻辑，略有增量） ——
             {
                 const cCrit = 2 * Math.sqrt(SCALE.k * SCALE.mass);
                 SCALE.c = Math.max(SCALE.c, cCrit * 1.05);
@@ -266,7 +298,6 @@
                 fbCanvas.style.zIndex = '1';
             };
 
-            // ————————— WebGL —————————
             const gl = glCanvas.getContext('webgl', {
                 antialias: false,
                 alpha: false
@@ -283,7 +314,7 @@
 
             gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
             gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); // 坐标统一自下而上
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
             const VERT = `
     #ifdef GL_ES
@@ -292,6 +323,7 @@
     attribute vec2 a_pos;
     void main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
 
+            // ★ FRAG：加入 u_pulseMode / u_waveLambda，并根据模式生成 basePulse
             const FRAG = `
     #ifdef GL_ES
       #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -313,6 +345,9 @@
     uniform float u_thresh, u_falloff, u_aa;
     uniform float u_pulseOn;
 
+    uniform int   u_pulseMode;   // ★ 1 or 2
+    uniform float u_waveLambda;  // ★ 像素
+
     uniform vec2  u_texSize;
     uniform ivec2 u_gridMin;
     uniform sampler2D u_dispTex;
@@ -333,13 +368,44 @@
       return texture2D(u_dispTex, uv).rgb; // R=dx, G=dy, B=scaleAbs(>1)|0
     }
 
+    float pulseBase(vec2 uv){
+      // 默认：全局同相位（向后兼容）
+      float phase0 = 0.5 + 0.5 * sin(6.2831853 * u_pulseHz * u_time);
+      float baseDefault = u_pulseMin + (1.0 - u_pulseMin) * phase0;
+
+      // 统一使用 NE 方向 (1,1) / sqrt(2)
+      vec2 n = normalize(vec2(1.0, 1.0));
+      float k = 6.2831853 / max(1.0, u_waveLambda);
+      float w = 6.2831853 * u_pulseHz;
+
+      if(u_pulseMode == 1){
+        // 样式A：左下→右上 行波（沿 n 正向传播）
+        float s = dot(uv, n);
+        float ph = k*s - w*u_time;
+        float run = u_pulseMin + (1.0 - u_pulseMin) * (0.5 + 0.5 * sin(ph));
+        return run;
+      }else if(u_pulseMode == 2){
+        // 样式B：对角向中心往复（来自左上与右下的对向波叠加）
+        float s1 = dot(uv, n);
+        float s2 = dot(u_res - uv, n);
+        float ph1 = k*s1 - w*u_time;
+        float ph2 = k*s2 - w*u_time;
+        // 归一到 [0,1]，中间加强
+        float comb = 0.5 + 0.25*(sin(ph1) + sin(ph2));
+        float run = u_pulseMin + (1.0 - u_pulseMin) * comb;
+        return run;
+      }else{
+        return baseDefault;
+      }
+    }
+
     void main(){
       vec2 uv = gl_FragCoord.xy;
       vec2 C  = u_res * 0.5;
 
-      float pulsePhase = 0.5 + 0.5 * sin(6.2831853 * u_pulseHz * u_time);
-      float pulseRun   = u_pulseMin + (1.0 - u_pulseMin) * pulsePhase;
-      float pulse      = mix(1.0, pulseRun, step(0.5, u_pulseOn)); // 关→1
+      // ★ 基于模式的脉动（pulseOn=0 → 退化为 1.0）
+      float basePulse = pulseBase(uv);
+      float pulse     = mix(1.0, basePulse, step(0.5, u_pulseOn));
 
       float dmin = 1e6;
       float insideF = 0.0;
@@ -362,7 +428,6 @@
           vec3 ds = fetchDispScale(ivec2(int(i), int(j)));
           center += ds.rg;
 
-          // 你当前的合成规则：有速度倍率就覆盖脉动（保持你的手感）
           float sizeFactor = (ds.b > 0.0) ? max(pulse, ds.b) : pulse;
 
           vec2 hSize  = u_half0 * sizeFactor;
@@ -431,6 +496,8 @@
                 u_texSize = U('u_texSize'),
                 u_gridMin = U('u_gridMin');
             const u_scanR = U('u_scanR');
+            const u_pulseMode = U('u_pulseMode'); // ★
+            const u_waveLambda = U('u_waveLambda'); // ★
 
             function syncStatics() {
                 gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
@@ -441,6 +508,8 @@
                 gl.uniform1f(u_pulseOn, 1.0);
                 gl.uniform1f(u_thresh, CFG.threshold);
                 gl.uniform1f(u_aa, CFG.aa * DPR);
+                gl.uniform1i(u_pulseMode, PULSEFX.mode); // ★
+                gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR); // ★（像素→设备像素）
                 const k = Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR);
                 gl.uniform1f(u_falloff, k);
                 syncStep();
@@ -469,18 +538,19 @@
             }
             addEventListener('resize', resize);
 
-            // —— 每格弹簧场 —— 
+            // —— 弹簧场（与上一版一致，省略注释） ——
             let cols = 0,
                 rows = 0,
                 iMin = 0,
                 jMin = 0;
             let dispArray = null,
-                velArray = null;
-            let scaleArray = null,
+                velArray = null,
+                scaleArray = null,
                 scaleVelArray = null,
-                scaleLock = null; // ★ 新增：锁
+                scaleLock = null;
             let posKFactor = null,
-                sizeKFactor = null; // ★ 新增：回弹速度因子
+                sizeKFactor = null,
+                lastTouch = null;
             let dispTex = null;
 
             function gridMetrics() {
@@ -494,13 +564,12 @@
             function initSpringField() {
                 const w = glCanvas.width,
                     h = glCanvas.height;
-
                 const {
                     stepX,
                     stepY
                 } = gridMetrics();
-                const iSpan = Math.ceil((w / stepX) + 6);
-                const jSpan = Math.ceil((h / stepY) + 6);
+                const iSpan = Math.ceil((w / stepX) + 6),
+                    jSpan = Math.ceil((h / stepY) + 6);
                 iMin = -iSpan;
                 jMin = -jSpan;
                 const iMax = iSpan,
@@ -508,18 +577,19 @@
                 cols = iMax - iMin + 1;
                 rows = jMax - jMin + 1;
 
-                lastTouch = new Float64Array(cols * rows); // 初始全 0
                 dispArray = new Float32Array(cols * rows * 2);
                 velArray = new Float32Array(cols * rows * 2);
                 scaleArray = new Float32Array(cols * rows);
                 scaleVelArray = new Float32Array(cols * rows);
-                scaleLock = new Uint8Array(cols * rows); // ★ 新增：默认 0=未锁
-                posKFactor = new Float32Array(cols * rows); // ★ 新增：默认 1
-                sizeKFactor = new Float32Array(cols * rows); // ★ 新增：默认 1
+                scaleLock = new Uint8Array(cols * rows);
+                posKFactor = new Float32Array(cols * rows);
+                sizeKFactor = new Float32Array(cols * rows);
+                lastTouch = new Float64Array(cols * rows);
                 for (let q = 0; q < cols * rows; q++) {
                     scaleArray[q] = 1.0;
                     posKFactor[q] = 1.0;
                     sizeKFactor[q] = 1.0;
+                    lastTouch[q] = 0;
                 }
 
                 if (!dispTex) dispTex = gl.createTexture();
@@ -543,7 +613,7 @@
                 const ii = i - iMin,
                     jj = j - jMin;
                 if (ii < 0 || ii >= cols || jj < 0 || jj >= rows) return -1;
-                return (jj * cols + ii);
+                return jj * cols + ii;
             };
             const idx = (i, j) => {
                 const base = idx2(i, j);
@@ -552,8 +622,8 @@
 
             function nearestIndex(x, y) {
                 const w = glCanvas.width,
-                    h = glCanvas.height;
-                const Cx = w * 0.5,
+                    h = glCanvas.height,
+                    Cx = w * 0.5,
                     Cy = h * 0.5;
                 const {
                     stepX,
@@ -570,8 +640,8 @@
 
             function centerOf(i, j) {
                 const w = glCanvas.width,
-                    h = glCanvas.height;
-                const Cx = w * 0.5,
+                    h = glCanvas.height,
+                    Cx = w * 0.5,
                     Cy = h * 0.5;
                 const {
                     stepX,
@@ -590,7 +660,6 @@
                 stepSprings._t = now;
                 let dt = Math.min(Math.max(dtRaw, 1 / 120), 1 / 30);
 
-                // —— 位移弹簧（果冻）：按每格 posKFactor 缩放 k、c（保持阻尼比不变）——
                 const invM = 1.0 / SPRING.mass;
                 for (let j = 0; j < rows; j++) {
                     for (let i = 0; i < cols; i++) {
@@ -600,24 +669,19 @@
                             y = dispArray[p + 1];
                         let vx = velArray[p],
                             vy = velArray[p + 1];
-
-                        const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, posKFactor[base])) : 1.0; // 保护
-                        const kEff = SPRING.k * fac;
-                        const cEff = SPRING.c * Math.sqrt(fac); // 保持 ζ = c/(2√(km)) 不变 → 手感一致，只是时间尺度放慢
-
+                        const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, posKFactor[base])) : 1.0;
+                        const kEff = SPRING.k * fac,
+                            cEff = SPRING.c * Math.sqrt(fac);
                         const ax = (-kEff * x - cEff * vx) * invM;
                         const ay = (-kEff * y - cEff * vy) * invM;
                         vx += ax * dt;
                         x += vx * dt;
                         vy += ay * dt;
                         y += vy * dt;
-
                         dispArray[p] = x;
                         dispArray[p + 1] = y;
                         velArray[p] = vx;
                         velArray[p + 1] = vy;
-
-                        // ★ 回弹速度缓慢恢复：因子 → 1
                         if (REBOUND.enable) {
                             const r = Math.min(1.0, REBOUND.recoverRate * dt);
                             posKFactor[base] += (1.0 - posKFactor[base]) * r;
@@ -625,38 +689,28 @@
                     }
                 }
 
-                // —— 尺寸弹簧（回到 1.0）：落地即锁 + 回弹速度因子（仅未锁时生效）——
                 const invMs = 1.0 / SCALE.mass;
                 for (let j = 0; j < rows; j++) {
                     for (let i = 0; i < cols; i++) {
                         const base = j * cols + i;
-
-                        if (scaleLock[base]) { // 已锁：保持 1，不再积分
+                        if (scaleLock[base]) {
                             scaleArray[base] = 1.0;
                             scaleVelArray[base] = 0.0;
-                            // 因子也往回收
                             if (REBOUND.enable) {
                                 const r = Math.min(1.0, REBOUND.recoverRate * dt);
                                 sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
                             }
                             continue;
                         }
-
-                        let s = scaleArray[base];
-                        let vs = scaleVelArray[base];
-
+                        let s = scaleArray[base],
+                            vs = scaleVelArray[base];
                         const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, sizeKFactor[base])) : 1.0;
-                        const kEff = SCALE.k * fac;
-                        // 稍过阻尼：cEff ~ 1.05*cCrit(kEff)
-                        const cEff = (2 * Math.sqrt(kEff * SCALE.mass)) * 1.05;
-
+                        const kEff = SCALE.k * fac,
+                            cEff = (2 * Math.sqrt(kEff * SCALE.mass)) * 1.05;
                         const ds = (1.0 - s);
                         const as = (kEff * ds - cEff * vs) * invMs;
                         vs += as * dt;
-
                         const sNext = s + vs * dt;
-
-                        // ★ 第一次穿过 1（向下）→ 落地锁住
                         if (s > 1.0 && sNext <= 1.0 && vs < 0.0) {
                             s = 1.0;
                             vs = 0.0;
@@ -664,13 +718,10 @@
                         } else {
                             s = sNext;
                         }
-
                         s = Math.max(0.2, Math.min(3.0, s));
                         vs = Math.max(-1000, Math.min(1000, vs));
-
                         scaleArray[base] = s;
                         scaleVelArray[base] = vs;
-
                         if (REBOUND.enable) {
                             const r = Math.min(1.0, REBOUND.recoverRate * dt);
                             sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
@@ -678,30 +729,30 @@
                     }
                 }
 
-                // —— 闲置自动收尾：长时间未触碰且已接近静止 → 强制归零 —— 
+                // 闲置自动收尾
                 {
-                    const now = performance.now() * 0.001;
+                    const rForce = Math.min(1.0, FADE.forceRate * dt);
                     for (let j = 0; j < rows; j++) {
                         for (let i = 0; i < cols; i++) {
                             const base = j * cols + i;
-                            // 未触碰过或刚触碰过不处理
-                            if (now - (lastTouch[base] || 0) < FADE.idleMs * 0.001) continue;
-
+                            const idleSec = now - (lastTouch[base] || 0);
+                            if (idleSec < FADE.idleMs * 0.001) continue;
                             const p = base * 2;
-                            const x = dispArray[p],
-                                y = dispArray[p + 1];
-                            const vx = velArray[p],
-                                vy = velArray[p + 1];
-                            const s = scaleArray[base],
-                                vs = scaleVelArray[base];
-
+                            dispArray[p] += (0 - dispArray[p]) * rForce;
+                            dispArray[p + 1] += (0 - dispArray[p + 1]) * rForce;
+                            velArray[p] *= (1 - rForce);
+                            velArray[p + 1] *= (1 - rForce);
+                            scaleArray[base] += (1.0 - scaleArray[base]) * rForce;
+                            scaleVelArray[base] *= (1 - rForce);
+                            posKFactor[base] += (1.0 - posKFactor[base]) * rForce;
+                            sizeKFactor[base] += (1.0 - sizeKFactor[base]) * rForce;
                             const almostStill =
-                                Math.abs(x) < FADE.restDisp && Math.abs(y) < FADE.restDisp &&
-                                Math.abs(vx) < FADE.restVel && Math.abs(vy) < FADE.restVel &&
-                                Math.abs(s - 1.0) < FADE.restScaleEps && Math.abs(vs) < 0.5;
-
+                                Math.abs(dispArray[p]) < FADE.restDisp && Math.abs(dispArray[p + 1]) < FADE
+                                .restDisp &&
+                                Math.abs(velArray[p]) < FADE.restVel && Math.abs(velArray[p + 1]) < FADE.restVel &&
+                                Math.abs(scaleArray[base] - 1.0) < FADE.restScaleEps && Math.abs(scaleVelArray[
+                                    base]) < 0.5;
                             if (almostStill) {
-                                // 位移归零、速度清零、缩放落地锁
                                 dispArray[p] = 0;
                                 dispArray[p + 1] = 0;
                                 velArray[p] = 0;
@@ -711,15 +762,13 @@
                                 scaleLock[base] = 1;
                                 posKFactor[base] = 1.0;
                                 sizeKFactor[base] = 1.0;
-                                // 重置时间戳，避免重复判断
                                 lastTouch[base] = now;
                             }
                         }
                     }
                 }
 
-
-                // —— 写纹理：RG=位移，B=绝对倍率(>1)|0（锁住后强制 0），A=1 —— 
+                // 写纹理
                 const tex = new Float32Array(cols * rows * 4);
                 for (let j = 0; j < rows; j++) {
                     for (let i = 0; i < cols; i++) {
@@ -729,14 +778,14 @@
                         tex[p4] = dispArray[p2];
                         tex[p4 + 1] = dispArray[p2 + 1];
                         const sAbs = scaleArray[base];
-                        tex[p4 + 2] = (!scaleLock[base] && sAbs > 1.01) ? sAbs : 0.0; // ★ 锁后不再点亮 B
+                        tex[p4 + 2] = (!scaleLock[base] && sAbs > 1.01) ? sAbs : 0.0;
                         tex[p4 + 3] = 1.0;
                     }
                 }
                 gl.bindTexture(gl.TEXTURE_2D, dispTex);
                 gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.FLOAT, tex);
 
-                // 动态扫描半径（按当前最大位移推一个最小扫描圈）
+                // 扫描半径
                 let maxD = 0;
                 for (let j = 0; j < rows; j++) {
                     for (let i = 0; i < cols; i++) {
@@ -757,16 +806,28 @@
 
             const cellsToRadiusCells = (n) => Math.max(0.5, Math.sqrt(Math.max(1, n) / Math.PI));
 
+            let lastDirX = 1,
+                lastDirY = 0;
+            const DROPcfg = DROP;
+
             function injectAOE(x, y, speed, vx, vy) {
-                // 归一速度（用 SPEEDBIND.capPx 做参考）
-                const sCap = Math.max(1, SPEEDBIND.capPx);
-                const s01 = Math.max(0, Math.min(1, speed / sCap));
+                const sp = Math.hypot(vx, vy);
+                let dirx = lastDirX,
+                    diry = lastDirY;
+                if (sp > 1e-3) {
+                    dirx = vx / sp;
+                    diry = vy / sp;
+                    lastDirX = dirx;
+                    lastDirY = diry;
+                }
+
+                const sMin = Math.max(0, DROPcfg.speedMin),
+                    sMax = PLUCK.capPx;
+                const s01_raw = (speed - sMin) / Math.max(1, (sMax - sMin));
+                const s01 = Math.max(0, Math.min(1, s01_raw));
 
                 const speedForImpulse = PLUCK.capEnable ? Math.min(speed, PLUCK.capPx) : speed;
                 const gainBase = Math.min(SPRING.maxImpulse, speedForImpulse * SPRING.gainRatio);
-                const dirx = vx / (speed + 1e-6),
-                    diry = vy / (speed + 1e-6);
-
                 const mulAbs = 1.0 + s01 * (SCALE.maxScale - 1.0);
 
                 const targetCells = 1 + Math.floor(s01 * (AOE.maxCells - 1));
@@ -782,10 +843,15 @@
                     i: ic,
                     j: jc
                 } = nearestIndex(x, y);
-                const rI = Math.ceil(rPx / stepX) + 1;
-                const rJ = Math.ceil(rPx / stepY) + 1;
+                const rI = Math.ceil(rPx / stepX) + 1,
+                    rJ = Math.ceil(rPx / stepY) + 1;
 
-                // ★ 由速度映射回弹“慢化”系数：越快 → 因子越小 → k 变小 → 回得更慢
+                const rFront = rPx * (1 + DROPcfg.front * s01);
+                const rBack = rPx * (1 - 0.20 * s01);
+                const rSide = Math.max(0.4 * rPx, rPx * (1 - DROPcfg.squeeze * s01));
+                const dirPerpX = -diry,
+                    dirPerpY = dirx;
+
                 const posFac = REBOUND.enable ? (1.0 - s01 * (1.0 - REBOUND.posKMin)) : 1.0;
                 const sizeFac = REBOUND.enable ? (1.0 - s01 * (1.0 - REBOUND.sizeKMin)) : 1.0;
 
@@ -802,42 +868,81 @@
                         } = centerOf(i, j);
                         const dx = cx - x,
                             dy = cy - y;
-                        const d = Math.hypot(dx, dy);
-                        if (d > rPx) continue;
+                        const par = dx * dirx + dy * diry;
+                        const perpSigned = dx * dirPerpX + dy * dirPerpY; // 不取绝对值，先保留符号
+                        const perp = Math.abs(perpSigned);
 
-                        const t = d / rPx;
-                        const w = 1.0 - (t * t * (3.0 - 2.0 * t)); // smoothstep 权重
+                        // 默认：沿用旧椭圆（以便随时切回）
+                        let inside = false;
+                        let w = 0.0;
 
-                        // 位移注入（果冻）
+                        if (!DROP.singleTail) {
+                            const rLong = par >= 0 ? rFront : rBack;
+                            const d = Math.sqrt((par * par) / (rLong * rLong) + (perp * perp) / (rSide * rSide));
+                            if (d <= 1.0) {
+                                const t = d;
+                                w = 1.0 - (t * t * (3.0 - 2.0 * t));
+                                inside = true;
+                            }
+                        } else {
+                            // —— 单尾水滴：前圆头 + 后锥尾 ——
+                            // 头：一个较小的“圆帽”/胶囊；尾：横向半径随 -par 渐缩
+                            const headR = Math.max(0.1 * rPx, DROP.headRatio * rPx); // 圆头纵向半径
+                            const tailL = rBack; // 尾巴长度 = 你原来的 rBack
+                            // 前头（par>=0）：圆头 + 略宽横向（用 rSide）
+                            if (par >= 0.0) {
+                                const dHead = Math.sqrt((par * par) / (headR * headR) + (perp * perp) / (rSide *
+                                    rSide));
+                                if (dHead <= 1.0) {
+                                    const t = dHead;
+                                    w = 1.0 - (t * t * (3.0 - 2.0 * t));
+                                    inside = true;
+                                }
+                            } else {
+                                // 尾部（par<0）：横向半径从 rSide 逐渐收缩到很小，形成“单条尾巴”
+                                const tau = Math.min(1.0, (-par) / Math.max(1e-6, tailL)); // 0 在脖颈，1 在尾端
+                                // 横向半径随 tau 收缩：1 → (1 - tailTaper)
+                                const side = Math.max(0.12 * rSide, rSide * (1.0 - DROP.tailTaper * tau));
+                                // 纵向可微收缩一点，避免尾端鼓包
+                                const long = Math.max(1e-6, tailL * (1.0 - 0.15 * tau));
+                                const dTail = Math.sqrt((par * par) / (long * long) + (perp * perp) / (side *
+                                    side));
+                                if (dTail <= 1.0) {
+                                    const u = dTail;
+                                    w = 1.0 - (u * u * (3.0 - 2.0 * u));
+                                    inside = true;
+                                }
+                            }
+                        }
+
+                        if (!inside) continue;
+
+
                         velArray[p] += dirx * (gainBase * w);
                         velArray[p + 1] += diry * (gainBase * w);
 
-                        // ★ 解锁尺寸，允许再次被放大
                         scaleLock[base] = 0;
-
-                        // 记录最近触摸时间（秒）
-                        lastTouch[base] = performance.now() * 0.001;
-
-
-                        // 尺寸跟随（目标绝对倍率 mulAbs）
-                        const s = scaleArray[base];
-                        const err = (mulAbs - s);
+                        const s = scaleArray[base],
+                            err = (mulAbs - s);
                         const push = SCALE.followGain * err * w;
                         const maxPush = 2.0;
                         scaleVelArray[base] += Math.max(-maxPush, Math.min(maxPush, push));
 
-                        // ★ 更新每格回弹速度因子（取“更慢”的那个；释放时会慢慢恢复到 1）
                         posKFactor[base] = Math.min(posKFactor[base], posFac);
                         sizeKFactor[base] = Math.min(sizeKFactor[base], sizeFac);
+                        lastTouch[base] = performance.now() * 0.001;
                     }
                 }
             }
 
             function injectPathImpulse(x0, y0, x1, y1, speed, vx, vy) {
-                const steps = Math.max(1, SPRING.samplesPerStep * Math.max(
-                    Math.abs(x1 - x0) / (CFG.size * DPR),
-                    Math.abs(y1 - y0) / (CFG.size * DPR)
-                ));
+                const dist = Math.hypot(x1 - x0, y1 - y0);
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const unit = 0.65 * Math.min(stepX, stepY); // 每 0.65 个格距取一次样本
+                const steps = Math.max(1, Math.ceil(dist / unit));
                 for (let k = 0; k <= steps; k++) {
                     const t = k / steps;
                     const x = x0 + (x1 - x0) * t;
@@ -846,60 +951,7 @@
                 }
             }
 
-            function settleBubble(x, y) {
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const unit = Math.min(stepX, stepY);
-                const rPx = STOP.radiusCells * unit;
 
-                const {
-                    i: ic,
-                    j: jc
-                } = nearestIndex(x, y);
-                const rI = Math.ceil(rPx / stepX) + 1;
-                const rJ = Math.ceil(rPx / stepY) + 1;
-
-                for (let dj = -rJ; dj <= rJ; dj++) {
-                    const j = jc + dj;
-                    for (let di = -rI; di <= rI; di++) {
-                        const i = ic + di;
-                        const base = idx2(i, j);
-                        if (base < 0) continue;
-                        const p = base * 2;
-
-                        const {
-                            cx,
-                            cy
-                        } = centerOf(i, j);
-                        const dx = cx - x,
-                            dy = cy - y;
-                        if (Math.hypot(dx, dy) > rPx) continue;
-
-                        // 1) 回弹因子立刻恢复到 1（马上按正常速度回）
-                        posKFactor[base] = 1.0;
-                        sizeKFactor[base] = 1.0;
-
-                        // 2) 位移速度削一下尖刺
-                        velArray[p] *= STOP.velCut;
-                        velArray[p + 1] *= STOP.velCut;
-
-                        // 3) 缩放接近 1 则直接落地锁住
-                        if (Math.abs(scaleArray[base] - 1.0) <= FADE.restScaleEps) {
-                            scaleArray[base] = 1.0;
-                            scaleVelArray[base] = 0.0;
-                            scaleLock[base] = 1;
-                        }
-
-                        // 更新触摸时间，避免立刻被“闲置收尾”误伤
-                        lastTouch[base] = performance.now() * 0.001;
-                    }
-                }
-            }
-
-
-            // 交互
             let pluckOn = true,
                 pulseOn = true;
             let savedPulseMin = CFG.pulseMin;
@@ -930,7 +982,7 @@
                 if (e.key === 'o' || e.key === 'O') btnPluck.click();
             });
 
-            // UI 绑定（与你现版一致 + 小笔误修）
+            // 绑定 UI
             const id = x => document.getElementById(x);
             const sizeR = id('sizeRange'),
                 gapR = id('gapRange'),
@@ -948,7 +1000,12 @@
                 speedEffR = id('speedEffRange'),
                 maxCellsR = id('maxCellsRange'),
                 maxScaleR = id('maxScaleRange'),
-                pluckCapR = id('pluckCapRange');
+                pluckCapR = id('pluckCapRange'),
+                fadeRateR = id('fadeRateRange'),
+                speedMinR = id('speedMinRange'),
+                dropFrontR = id('dropFrontRange'),
+                dropSqueezeR = id('dropSqueezeRange'),
+                pulseLamR = id('pulseLamRange'); // ★
             const vSize = id('vSize'),
                 vGap = id('vGap'),
                 vRad = id('vRadius'),
@@ -966,14 +1023,19 @@
                 vMS = id('vMS'),
                 vMaxCells = id('vMaxCells'),
                 vMaxScale = id('vMaxScale'),
-                vPluckCap = id('vPluckCap');
+                vPluckCap = id('vPluckCap'),
+                vFadeRate = id('vFadeRate'),
+                vSpeedMin = id('vSpeedMin'),
+                vDropFront = id('vDropFront'),
+                vDropSqueeze = id('vDropSqueeze'),
+                vPulseLam = id('vPulseLam'); // ★
             const capToggle = document.getElementById('capToggle');
 
             function initSliders() {
                 sizeR.value = CFG.size;
                 vSize.textContent = CFG.size + ' px';
                 gapR.value = CFG.extraGap;
-                vGap.textContent = CFG.extraGap + ' px'; // ★ 修正 textContent
+                vGap.textContent = CFG.extraGap + ' px';
                 radR.value = CFG.corner;
                 vRad.textContent = CFG.corner + ' px';
                 spdR.value = CFG.pulseSpeedHz;
@@ -982,7 +1044,6 @@
                 vCR.textContent = CFG.connectRange.toFixed(1) + ' px';
                 thR.value = CFG.threshold;
                 vTh.textContent = CFG.threshold.toFixed(2);
-
                 sigR.value = WAVE.sigma;
                 vSig.textContent = WAVE.sigma.toFixed(0) + ' px';
                 lamR.value = WAVE.lambda;
@@ -991,12 +1052,10 @@
                 vFq.textContent = WAVE.freq.toFixed(2) + ' Hz';
                 gamR.value = WAVE.gamma;
                 vGam.textContent = WAVE.gamma.toFixed(2);
-
                 ratioR.value = PLUCK.ratio;
                 vRatio.textContent = PLUCK.ratio.toFixed(3);
                 delayR.value = PLUCK.delayMs;
                 vDelay.textContent = PLUCK.delayMs + ' ms';
-
                 speedCapR.value = SPEEDBIND.capPx;
                 vSCap.textContent = SPEEDBIND.capPx + ' px/s';
                 speedEffR.value = SPEEDBIND.effect;
@@ -1005,11 +1064,26 @@
                 vMaxCells.textContent = AOE.maxCells.toString();
                 maxScaleR.value = SCALE.maxScale;
                 vMaxScale.textContent = SCALE.maxScale.toFixed(2) + '×';
-
                 pluckCapR.value = PLUCK.capPx;
                 vPluckCap.textContent = PLUCK.capPx + ' px/s';
                 capToggle.setAttribute('aria-pressed', PLUCK.capEnable);
                 capToggle.textContent = `拨动限速：${PLUCK.capEnable?'开':'关'}`;
+                fadeRateR.value = FADE.forceRate;
+                vFadeRate.textContent = FADE.forceRate.toFixed(1) + '/s';
+                speedMinR.value = DROPcfg.speedMin;
+                vSpeedMin.textContent = DROPcfg.speedMin + ' px/s';
+                dropFrontR.value = DROPcfg.front;
+                vDropFront.textContent = DROPcfg.front.toFixed(2);
+                dropSqueezeR.value = DROPcfg.squeeze;
+                vDropSqueeze.textContent = DROPcfg.squeeze.toFixed(2);
+
+                // ★ 脉动波长
+                pulseLamR.value = PULSEFX.lambdaPx;
+                vPulseLam.textContent = PULSEFX.lambdaPx + ' px';
+                // ★ 脉动样式单选
+                document.querySelectorAll('input[name="pulseMode"]').forEach(r => {
+                    r.checked = (Number(r.value) === PULSEFX.mode);
+                });
 
                 vMS.textContent = '0 px/s';
             }
@@ -1093,7 +1167,46 @@
                 capToggle.textContent = `拨动限速：${PLUCK.capEnable?'开':'关'}`;
             };
 
-            // 鼠标（自下而上坐标）
+            // ★ 脉动样式变化
+            document.querySelectorAll('input[name="pulseMode"]').forEach(r => {
+                r.addEventListener('change', () => {
+                    const val = Number(r.value);
+                    if (val === 1 || val === 2) {
+                        PULSEFX.mode = val;
+                        gl.uniform1i(u_pulseMode, PULSEFX.mode);
+                    }
+                });
+            });
+            // ★ 脉动波长
+            pulseLamR.oninput = () => {
+                PULSEFX.lambdaPx = +pulseLamR.value;
+                vPulseLam.textContent = PULSEFX.lambdaPx + ' px';
+                gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
+            };
+
+            // 水滴面板
+            // const fadeRateR=document.getElementById('fadeRateRange');
+            // const speedMinR=document.getElementById('speedMinRange');
+            // const dropFrontR=document.getElementById('dropFrontRange');
+            // const dropSqueezeR=document.getElementById('dropSqueezeRange');
+            fadeRateR.oninput = () => {
+                FADE.forceRate = +fadeRateR.value;
+                document.getElementById('vFadeRate').textContent = FADE.forceRate.toFixed(1) + '/s';
+            };
+            speedMinR.oninput = () => {
+                DROPcfg.speedMin = +speedMinR.value;
+                document.getElementById('vSpeedMin').textContent = DROPcfg.speedMin + ' px/s';
+            };
+            dropFrontR.oninput = () => {
+                DROPcfg.front = +dropFrontR.value;
+                document.getElementById('vDropFront').textContent = DROPcfg.front.toFixed(2);
+            };
+            dropSqueezeR.oninput = () => {
+                DROPcfg.squeeze = +dropSqueezeR.value;
+                document.getElementById('vDropSqueeze').textContent = DROPcfg.squeeze.toFixed(2);
+            };
+
+            // 鼠标
             const mouse = {
                 x: 0,
                 y: 0,
@@ -1101,7 +1214,6 @@
             };
             let instSpeed = 0,
                 smoothSpeed = 0;
-
             addEventListener('pointermove', e => {
                 const rect = glCanvas.getBoundingClientRect();
                 const x = (e.clientX - rect.left) * DPR;
@@ -1115,7 +1227,6 @@
                 smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
                 document.getElementById('vMS').textContent = Math.round(smoothSpeed) + ' px/s';
 
-                // —— 快速→慢/停：触发安抚 —— 
                 if (pluckOn) {
                     const wasFast = (window.__prevSpeed || 0) > STOP.high;
                     const nowSlow = instSpeed < STOP.low;
@@ -1123,9 +1234,7 @@
                         settleBubble(x, y);
                     }
                     window.__prevSpeed = instSpeed;
-                }
 
-                if (pluckOn) {
                     if (instSpeed > PLUCK.speedThreshold || (now - (mouse.t || 0)) > 0.08) {
                         injectPathImpulse(mouse.x || x, mouse.y || y, x, y, instSpeed, vx, vy);
                     }
@@ -1136,7 +1245,6 @@
             }, {
                 passive: true
             });
-
             addEventListener('pointerdown', e => {
                 const rect = glCanvas.getBoundingClientRect();
                 const x = (e.clientX - rect.left) * DPR;
@@ -1148,6 +1256,47 @@
             }, {
                 passive: true
             });
+
+            function settleBubble(x, y) {
+                const {
+                    stepX,
+                    stepY
+                } = gridMetrics();
+                const unit = Math.min(stepX, stepY);
+                const rPx = STOP.radiusCells * unit;
+                const {
+                    i: ic,
+                    j: jc
+                } = nearestIndex(x, y);
+                const rI = Math.ceil(rPx / stepX) + 1,
+                    rJ = Math.ceil(rPx / stepY) + 1;
+                for (let dj = -rJ; dj <= rJ; dj++) {
+                    const j = jc + dj;
+                    for (let di = -rI; di <= rI; di++) {
+                        const i = ic + di;
+                        const base = idx2(i, j);
+                        if (base < 0) continue;
+                        const p = base * 2;
+                        const {
+                            cx,
+                            cy
+                        } = centerOf(i, j);
+                        const dx = cx - x,
+                            dy = cy - y;
+                        if (Math.hypot(dx, dy) > rPx) continue;
+                        posKFactor[base] = 1.0;
+                        sizeKFactor[base] = 1.0;
+                        velArray[p] *= STOP.velCut;
+                        velArray[p + 1] *= STOP.velCut;
+                        if (Math.abs(scaleArray[base] - 1.0) <= FADE.restScaleEps) {
+                            scaleArray[base] = 1.0;
+                            scaleVelArray[base] = 0.0;
+                            scaleLock[base] = 1;
+                        }
+                        lastTouch[base] = performance.now() * 0.001;
+                    }
+                }
+            }
 
             // 渲染
             let t0 = performance.now();
@@ -1169,7 +1318,7 @@
             }
             boot();
 
-            // 备用 Canvas2D（省略拨动）
+            // 备用 Canvas2D（不含拨动）
             function startFallback() {
                 const ctx = fbCanvas.getContext('2d');
 
@@ -1227,6 +1376,7 @@
                 resize2();
                 draw();
             }
+
         })();
     </script>
 </body>
