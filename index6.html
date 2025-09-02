@@ -1,332 +1,426 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
-
-<head>
+  <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>满屏粘连方块 · 脉动样式单选 + 行波/向心</title>
     <style>
-        html,
-        body {
-            height: 100%;
-            margin: 0;
-            background: #0b0f14
-        }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #0b0f14;
+      }
 
-        canvas {
-            position: fixed;
-            inset: 0;
-            display: block;
-            width: 100%;
-            height: 100%
-        }
+      canvas {
+        position: fixed;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
 
-        .ui {
-            position: fixed;
-            left: 16px;
-            top: 16px;
-            display: flex;
-            gap: 8px;
-            z-index: 10;
-            flex-wrap: wrap;
-            align-items: center;
-            max-width: 96vw
-        }
+      .ui {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        display: flex;
+        gap: 8px;
+        z-index: 10;
+        flex-wrap: wrap;
+        align-items: center;
+        max-width: 96vw;
+      }
 
-        .btn {
-            cursor: pointer;
-            border: 1px solid #2a3340;
-            background: #101825;
-            color: #e6eefc;
-            padding: 8px 12px;
-            border-radius: 10px;
-            font: 600 12px/1 ui-sans-serif, system-ui
-        }
+      .btn {
+        cursor: pointer;
+        border: 1px solid #2a3340;
+        background: #101825;
+        color: #e6eefc;
+        padding: 8px 12px;
+        border-radius: 10px;
+        font: 600 12px/1 ui-sans-serif, system-ui;
+      }
 
-        .btn[aria-pressed="true"] {
-            background: #1b2a40;
-            border-color: #314257
-        }
+      .btn[aria-pressed="true"] {
+        background: #1b2a40;
+        border-color: #314257;
+      }
 
-        .panel {
+      .panel {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        background: #0f141b;
+        border: 1px solid #2a3340;
+        padding: 8px 12px;
+        border-radius: 12px;
+      }
+
+      .panel label {
+        font: 12px/1 ui-sans-serif, system-ui;
+        color: #cdd6f4;
+        opacity: 0.95;
+      }
+
+      .panel input[type="range"] {
+        width: 160px;
+      }
+
+      .val {
+        min-width: 62px;
+        display: inline-block;
+        text-align: right;
+        color: #e6eefc;
+        font-weight: 600;
+      }
+
+      .err {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        color: #ffebee;
+        background: #3b1d22;
+        border: 1px solid #6b2a36;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: 12px/1.4 ui-sans-serif, system-ui;
+        max-width: 70ch;
+        white-space: pre-wrap;
+        z-index: 10;
+        display: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <canvas id="gl"></canvas>
+    <canvas id="fallback" style="z-index: -1"></canvas>
+
+    <div class="ui">
+      <button id="pulse" class="btn" aria-pressed="true">脉动：开 (P)</button>
+      <button id="pluck" class="btn" aria-pressed="true">拨动：开 (O)</button>
+
+      <div class="panel">
+        <label
+          >尺寸 <span id="vSize" class="val"></span
+          ><input id="sizeRange" type="range" min="8" max="160" step="1"
+        /></label>
+        <label
+          >间隔 <span id="vGap" class="val"></span
+          ><input id="gapRange" type="range" min="0" max="120" step="1"
+        /></label>
+        <label
+          >圆角 <span id="vRadius" class="val"></span
+          ><input id="radiusRange" type="range" min="0" max="80" step="1"
+        /></label>
+        <label
+          >脉动速度 <span id="vSpeed" class="val"></span
+          ><input id="speedRange" type="range" min="0" max="3" step="0.01"
+        /></label>
+        <label
+          >连接范围 <span id="vCR" class="val"></span
+          ><input id="crRange" type="range" min="0" max="12" step="0.1"
+        /></label>
+        <label
+          >阈值 <span id="vTh" class="val"></span
+          ><input id="thRange" type="range" min="0.1" max="4" step="0.01"
+        /></label>
+      </div>
+
+      <div class="panel">
+        <label>拨动强度上限 <span class="val">20</span></label>
+        <label
+          >速度→强度比例 <span id="vRatio" class="val"></span
+          ><input id="ratioRange" type="range" min="0" max="0.1" step="0.001"
+        /></label>
+        <label
+          >释放延时(ms) <span id="vDelay" class="val"></span
+          ><input id="delayRange" type="range" min="0" max="500" step="10"
+        /></label>
+      </div>
+
+      <div class="panel">
+        <label>拨动强度基准(amp) <span class="val">20</span></label>
+        <label
+          >空间衰减σ <span id="vSig" class="val"></span
+          ><input id="sigRange" type="range" min="10" max="400" step="1"
+        /></label>
+        <label
+          >波长λ <span id="vLam" class="val"></span
+          ><input id="lamRange" type="range" min="20" max="800" step="1"
+        /></label>
+        <label
+          >频率Hz <span id="vFq" class="val"></span
+          ><input id="fqRange" type="range" min="0" max="5" step="0.01"
+        /></label>
+        <label
+          >时间阻尼γ <span id="vGam" class="val"></span
+          ><input id="gamRange" type="range" min="0" max="4" step="0.01"
+        /></label>
+      </div>
+
+      <div class="panel">
+        <button id="bindAmp" class="btn" aria-pressed="true">
+          amp↔速：正比
+        </button>
+        <button id="bindSig" class="btn" aria-pressed="true">σ↔速：正比</button>
+        <button id="bindLam" class="btn" aria-pressed="true">λ↔速：正比</button>
+        <button id="bindFq" class="btn" aria-pressed="true">f↔速：正比</button>
+        <button id="bindGam" class="btn" aria-pressed="true">γ↔速：正比</button>
+        <label
+          >映射用速度上限(px/s) <span id="vSCap" class="val"></span
+          ><input
+            id="speedCapRange"
+            type="range"
+            min="200"
+            max="4000"
+            step="10"
+        /></label>
+        <label
+          >映射强度 <span id="vSEff" class="val"></span
+          ><input id="speedEffRange" type="range" min="0" max="2" step="0.01"
+        /></label>
+        <label>当前速度 <span id="vMS" class="val"></span></label>
+      </div>
+
+      <div class="panel">
+        <label
+          >影响范围最大格数 <span id="vMaxCells" class="val"></span
+          ><input id="maxCellsRange" type="range" min="80" max="2000" step="1"
+        /></label>
+        <label
+          >速度放大倍率上限 <span id="vMaxScale" class="val"></span
+          ><input
+            id="maxScaleRange"
+            type="range"
+            min="1.0"
+            max="3.0"
+            step="0.01"
+        /></label>
+      </div>
+
+      <div class="panel">
+        <button id="capToggle" class="btn" aria-pressed="true">
+          拨动限速：开
+        </button>
+        <label
+          >拨动速度硬上限(px/s) <span id="vPluckCap" class="val"></span
+          ><input
+            id="pluckCapRange"
+            type="range"
+            min="200"
+            max="4000"
+            step="10"
+        /></label>
+      </div>
+
+      <!-- ★ 脉动样式 + 脉动波长 -->
+      <div class="panel">
+        <fieldset
+          style="
             display: flex;
             gap: 12px;
             align-items: center;
-            background: #0f141b;
-            border: 1px solid #2a3340;
-            padding: 8px 12px;
-            border-radius: 12px
-        }
+            border: none;
+            padding: 0;
+            margin: 0;
+          "
+        >
+          <legend
+            style="
+              color: #cdd6f4;
+              font: 600 12px/1 ui-sans-serif, system-ui;
+              opacity: 0.95;
+            "
+          >
+            脉动样式
+          </legend>
+          <label
+            ><input type="radio" name="pulseMode" value="1" checked /> 左下→右上
+            行波</label
+          >
+          <label
+            ><input type="radio" name="pulseMode" value="2" />
+            对角向中心往复</label
+          >
+        </fieldset>
+        <label
+          >脉动波长λ(px) <span id="vPulseLam" class="val"></span>
+          <input id="pulseLamRange" type="range" min="40" max="1400" step="1" />
+        </label>
+      </div>
 
-        .panel label {
-            font: 12px/1 ui-sans-serif, system-ui;
-            color: #cdd6f4;
-            opacity: .95
-        }
-
-        .panel input[type=range] {
-            width: 160px
-        }
-
-        .val {
-            min-width: 62px;
-            display: inline-block;
-            text-align: right;
-            color: #e6eefc;
-            font-weight: 600
-        }
-
-        .err {
-            position: fixed;
-            left: 16px;
-            bottom: 16px;
-            color: #ffebee;
-            background: #3b1d22;
-            border: 1px solid #6b2a36;
-            border-radius: 8px;
-            padding: 8px 10px;
-            font: 12px/1.4 ui-sans-serif, system-ui;
-            max-width: 70ch;
-            white-space: pre-wrap;
-            z-index: 10;
-            display: none
-        }
-    </style>
-</head>
-
-<body>
-    <canvas id="gl"></canvas>
-    <canvas id="fallback" style="z-index:-1"></canvas>
-
-    <div class="ui">
-        <button id="pulse" class="btn" aria-pressed="true">脉动：开 (P)</button>
-        <button id="pluck" class="btn" aria-pressed="true">拨动：开 (O)</button>
-
-        <div class="panel">
-            <label>尺寸 <span id="vSize" class="val"></span><input id="sizeRange" type="range" min="8" max="160"
-                    step="1" /></label>
-            <label>间隔 <span id="vGap" class="val"></span><input id="gapRange" type="range" min="0" max="120"
-                    step="1" /></label>
-            <label>圆角 <span id="vRadius" class="val"></span><input id="radiusRange" type="range" min="0" max="80"
-                    step="1" /></label>
-            <label>脉动速度 <span id="vSpeed" class="val"></span><input id="speedRange" type="range" min="0" max="3"
-                    step="0.01" /></label>
-            <label>连接范围 <span id="vCR" class="val"></span><input id="crRange" type="range" min="0" max="12"
-                    step="0.1" /></label>
-            <label>阈值 <span id="vTh" class="val"></span><input id="thRange" type="range" min="0.1" max="4"
-                    step="0.01" /></label>
-        </div>
-
-        <div class="panel">
-            <label>拨动强度上限 <span class="val">20</span></label>
-            <label>速度→强度比例 <span id="vRatio" class="val"></span><input id="ratioRange" type="range" min="0" max="0.1"
-                    step="0.001" /></label>
-            <label>释放延时(ms) <span id="vDelay" class="val"></span><input id="delayRange" type="range" min="0" max="500"
-                    step="10" /></label>
-        </div>
-
-        <div class="panel">
-            <label>拨动强度基准(amp) <span class="val">20</span></label>
-            <label>空间衰减σ <span id="vSig" class="val"></span><input id="sigRange" type="range" min="10" max="400"
-                    step="1" /></label>
-            <label>波长λ <span id="vLam" class="val"></span><input id="lamRange" type="range" min="20" max="800"
-                    step="1" /></label>
-            <label>频率Hz <span id="vFq" class="val"></span><input id="fqRange" type="range" min="0" max="5"
-                    step="0.01" /></label>
-            <label>时间阻尼γ <span id="vGam" class="val"></span><input id="gamRange" type="range" min="0" max="4"
-                    step="0.01" /></label>
-        </div>
-
-        <div class="panel">
-            <button id="bindAmp" class="btn" aria-pressed="true">amp↔速：正比</button>
-            <button id="bindSig" class="btn" aria-pressed="true">σ↔速：正比</button>
-            <button id="bindLam" class="btn" aria-pressed="true">λ↔速：正比</button>
-            <button id="bindFq" class="btn" aria-pressed="true">f↔速：正比</button>
-            <button id="bindGam" class="btn" aria-pressed="true">γ↔速：正比</button>
-            <label>映射用速度上限(px/s) <span id="vSCap" class="val"></span><input id="speedCapRange" type="range" min="200"
-                    max="4000" step="10" /></label>
-            <label>映射强度 <span id="vSEff" class="val"></span><input id="speedEffRange" type="range" min="0" max="2"
-                    step="0.01" /></label>
-            <label>当前速度 <span id="vMS" class="val"></span></label>
-        </div>
-
-        <div class="panel">
-            <label>影响范围最大格数 <span id="vMaxCells" class="val"></span><input id="maxCellsRange" type="range" min="80"
-                    max="2000" step="1" /></label>
-            <label>速度放大倍率上限 <span id="vMaxScale" class="val"></span><input id="maxScaleRange" type="range" min="1.0"
-                    max="3.0" step="0.01" /></label>
-        </div>
-
-        <div class="panel">
-            <button id="capToggle" class="btn" aria-pressed="true">拨动限速：开</button>
-            <label>拨动速度硬上限(px/s) <span id="vPluckCap" class="val"></span><input id="pluckCapRange" type="range"
-                    min="200" max="4000" step="10" /></label>
-        </div>
-
-        <!-- ★ 脉动样式 + 脉动波长 -->
-        <div class="panel">
-            <fieldset style="display:flex;gap:12px;align-items:center;border:none;padding:0;margin:0">
-                <legend style="color:#cdd6f4;font:600 12px/1 ui-sans-serif,system-ui;opacity:.95">脉动样式</legend>
-                <label><input type="radio" name="pulseMode" value="1" checked> 左下→右上 行波</label>
-                <label><input type="radio" name="pulseMode" value="2"> 对角向中心往复</label>
-            </fieldset>
-            <label>脉动波长λ(px) <span id="vPulseLam" class="val"></span>
-                <input id="pulseLamRange" type="range" min="40" max="800" step="1" />
-            </label>
-        </div>
-
-        <!-- 闲置速收尾 + 水滴 AOE -->
-        <div class="panel">
-            <label>闲置收尾强度 <span id="vFadeRate" class="val"></span><input id="fadeRateRange" type="range" min="0"
-                    max="100" step="0.1" /></label>
-            <label>AOE速度下限 <span id="vSpeedMin" class="val"></span><input id="speedMinRange" type="range" min="10"
-                    max="300" step="5" /></label>
-            <label>水滴前伸 <span id="vDropFront" class="val"></span><input id="dropFrontRange" type="range" min="0" max="2"
-                    step="0.05" /></label>
-            <label>水滴横向挤压 <span id="vDropSqueeze" class="val"></span><input id="dropSqueezeRange" type="range" min="0"
-                    max="0.8" step="0.02" /></label>
-            <label>最大位移(px) <span id="vMaxDisp" class="val"></span><input id="maxDispRange" type="range" min="4"
-                    max="3000" step="1" /></label>
-        </div>
+      <!-- 闲置速收尾 + 水滴 AOE -->
+      <div class="panel">
+        <label
+          >闲置收尾强度 <span id="vFadeRate" class="val"></span
+          ><input id="fadeRateRange" type="range" min="0" max="100" step="0.1"
+        /></label>
+        <label
+          >AOE速度下限 <span id="vSpeedMin" class="val"></span
+          ><input id="speedMinRange" type="range" min="10" max="300" step="5"
+        /></label>
+        <label
+          >水滴前伸 <span id="vDropFront" class="val"></span
+          ><input id="dropFrontRange" type="range" min="0" max="2" step="0.05"
+        /></label>
+        <label
+          >水滴横向挤压 <span id="vDropSqueeze" class="val"></span
+          ><input
+            id="dropSqueezeRange"
+            type="range"
+            min="0"
+            max="0.8"
+            step="0.02"
+        /></label>
+        <label
+          >最大位移(px) <span id="vMaxDisp" class="val"></span
+          ><input id="maxDispRange" type="range" min="4" max="3000" step="1"
+        /></label>
+      </div>
     </div>
 
     <div id="err" class="err"></div>
 
     <script>
-        (() => {
-            // ====== 配置（保持你的数值） ======
-            let driveMag = null,
-                driveDir = null,
-                driveT0 = null;
+      (() => {
+        // ====== 配置（保持你的数值） ======
+        let driveMag = null,
+          driveDir = null,
+          driveT0 = null;
 
-            const CFG = {
-                size: 18,
-                corner: 3,
-                extraGap: 4,
-                pulseSpeedHz: 0.3,
-                pulseMin: 0.0,
-                connectRange: 2.0,
-                threshold: 1.0,
-                aa: 1.0
-            };
-            const WAVE = {
-                amp: 20,
-                sigma: 30,
-                lambda: 68,
-                freq: 1.2,
-                gamma: 1.0
-            };
-            const PLUCK = {
-                ratio: 0.001,
-                delayMs: 200,
-                speedThreshold: 60,
-                capEnable: true,
-                capPx: 550
-            };
-            const SPEEDBIND = {
-                capPx: 1600,
-                effect: 1.0,
-                ampDir: true,
-                sigDir: true,
-                lamDir: true,
-                fqDir: true,
-                gamDir: true
-            };
-            const SPRING = {
-                k: 60.0,
-                c: 8.0,
-                mass: 1.0,
-                gainRatio: 0.02,
-                maxImpulse: 500.0,
-                samplesPerStep: 3,
-                maxDispPx: 90,
-                clampHard: true,
-                barrierK: 0.0
-            };
-            const SCALE = {
-                k: 50.0,
-                c: 10.0,
-                mass: 1.0,
-                followGain: 6.0,
-                maxScale: 1.25
-            };
-            const AOE = {
-                maxCells: 200
-            };
-            const REBOUND = {
-                enable: true,
-                posKMin: 0.35,
-                sizeKMin: 0.50,
-                recoverRate: 1.5
-            };
-            const STOP = {
-                high: 400,
-                low: 80,
-                radiusCells: 1.5,
-                velCut: 0.35
-            };
-            const FADE = {
-                idleMs: 200,
-                forceRate: 8.0,
-                restDisp: 0.6,
-                restVel: 2.0,
-                restScaleEps: 0.01
-            };
-            const PULSEFX = {
-                mode: 1,
-                lambdaPx: 800
-            };
-            const DROP = {
-                speedMin: 50,
-                front: 1.30,
-                squeeze: 0.35,
-                singleTail: true,
-                headRatio: 0.55,
-                tailTaper: 0.75
-            };
+        const CFG = {
+          size: 24,
+          corner: 3,
+          extraGap: 4,
+          pulseSpeedHz: 0.3,
+          pulseMin: 0.02,
+          connectRange: 2.0,
+          threshold: 1.0,
+          aa: 1.0,
+        };
+        const WAVE = {
+          amp: 20,
+          sigma: 30,
+          lambda: 68,
+          freq: 1.2,
+          gamma: 1.0,
+        };
+        const PLUCK = {
+          ratio: 0.001,
+          delayMs: 200,
+          speedThreshold: 60,
+          capEnable: true,
+          capPx: 550,
+        };
+        const SPEEDBIND = {
+          capPx: 1600,
+          effect: 1.0,
+          ampDir: true,
+          sigDir: true,
+          lamDir: true,
+          fqDir: true,
+          gamDir: true,
+        };
+        const SPRING = {
+          k: 60.0,
+          c: 8.0,
+          mass: 1.0,
+          gainRatio: 0.02,
+          maxImpulse: 500.0,
+          samplesPerStep: 3,
+          maxDispPx: 90,
+          clampHard: true,
+          barrierK: 0.0,
+        };
+        const SCALE = {
+          k: 50.0,
+          c: 10.0,
+          mass: 1.0,
+          followGain: 6.0,
+          maxScale: 1.25,
+          radAlpha: 1.2, // 距离曲线指数：越大，边缘衰减越猛（1~2 常用）
+          radFloor: 0.0, // 距离因子下限，0=边缘不放大；0.2=边缘也有20%放大
+        };
+        const AOE = {
+          maxCells: 200,
+        };
+        const REBOUND = {
+          enable: true,
+          posKMin: 0.35,
+          sizeKMin: 0.5,
+          recoverRate: 1.5,
+        };
+        const STOP = {
+          high: 400,
+          low: 80,
+          radiusCells: 1.5,
+          velCut: 0.35,
+        };
+        const FADE = {
+          idleMs: 200,
+          forceRate: 8.0,
+          restDisp: 0.6,
+          restVel: 2.0,
+          restScaleEps: 0.01,
+        };
+        const PULSEFX = {
+          mode: 1,
+          lambdaPx: 1400,
+        };
+        const DROP = {
+          speedMin: 50,
+          front: 1.3,
+          squeeze: 0.35,
+          singleTail: true,
+          headRatio: 0.55,
+          tailTaper: 0.75,
+        };
 
-            { // 让大小弹簧略过阻尼
-                const cCrit = 2 * Math.sqrt(SCALE.k * SCALE.mass);
-                SCALE.c = Math.max(SCALE.c, cCrit * 1.05);
-            }
+        {
+          // 让大小弹簧略过阻尼
+          const cCrit = 2 * Math.sqrt(SCALE.k * SCALE.mass);
+          SCALE.c = Math.max(SCALE.c, cCrit * 1.05);
+        }
 
-            // ====== WebGL 初始化 ======
-            const DPR = Math.min(2, window.devicePixelRatio || 1);
-            const glCanvas = document.getElementById('gl');
-            const fbCanvas = document.getElementById('fallback');
-            const errBox = document.getElementById('err');
-            const showErr = (m) => {
-                errBox.style.display = 'block';
-                errBox.textContent = m;
-                fbCanvas.style.zIndex = '1';
-            };
+        // ====== WebGL 初始化 ======
+        const DPR = Math.min(2, window.devicePixelRatio || 1);
+        const glCanvas = document.getElementById("gl");
+        const fbCanvas = document.getElementById("fallback");
+        const errBox = document.getElementById("err");
+        const showErr = (m) => {
+          errBox.style.display = "block";
+          errBox.textContent = m;
+          fbCanvas.style.zIndex = "1";
+        };
 
-            const gl = glCanvas.getContext('webgl', {
-                antialias: false,
-                alpha: false
-            });
-            if (!gl) {
-                showErr('未启用 WebGL，已回退 Canvas2D。');
-                startFallback();
-                return;
-            }
-            if (!gl.getExtension('OES_texture_float')) {
-                showErr('需要 WebGL 扩展：OES_texture_float');
-                return;
-            }
+        const gl = glCanvas.getContext("webgl", {
+          antialias: false,
+          alpha: false,
+        });
+        if (!gl) {
+          showErr("未启用 WebGL，已回退 Canvas2D。");
+          startFallback();
+          return;
+        }
+        if (!gl.getExtension("OES_texture_float")) {
+          showErr("需要 WebGL 扩展：OES_texture_float");
+          return;
+        }
 
-            gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-            gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-            const VERT = `
+        const VERT = `
 #ifdef GL_ES
 precision highp float;
 #endif
 attribute vec2 a_pos;
 void main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
 
-            const FRAG = `
+        const FRAG = `
 #ifdef GL_ES
   #ifdef GL_FRAGMENT_PRECISION_HIGH
     precision highp float;
@@ -403,7 +497,7 @@ void main(){
 
   float dmin=1e6, insideF=0.0, phi=0.0;
 
-  const int MAX_SCAN = 20;
+  const int MAX_SCAN = 48;
   float jBase = floor((uv.y - C.y) / u_step.y + 0.5);
   for(int jy=-MAX_SCAN; jy<=MAX_SCAN; jy++){
     if (abs(float(jy)) > u_scanR) continue;
@@ -438,1000 +532,1052 @@ void main(){
   gl_FragColor = vec4(vec3(mask), 1.0);
 }`;
 
-            function compile(type, src) {
-                const s = gl.createShader(type);
-                gl.shaderSource(s, src);
-                gl.compileShader(s);
-                if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-                    const log = gl.getShaderInfoLog(s) || '(empty log)';
-                    gl.deleteShader(s);
-                    throw new Error(log);
-                }
-                return s;
-            }
+        function compile(type, src) {
+          const s = gl.createShader(type);
+          gl.shaderSource(s, src);
+          gl.compileShader(s);
+          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+            const log = gl.getShaderInfoLog(s) || "(empty log)";
+            gl.deleteShader(s);
+            throw new Error(log);
+          }
+          return s;
+        }
 
-            let prog;
-            try {
-                prog = gl.createProgram();
-                gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-                gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-                gl.linkProgram(prog);
-                if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-            } catch (e) {
-                showErr('WebGL 着色器失败：' + e.message + '。已回退 Canvas2D。');
-                startFallback();
-                return;
-            }
-            gl.useProgram(prog);
+        let prog;
+        try {
+          prog = gl.createProgram();
+          gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+          gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+          gl.linkProgram(prog);
+          if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+            throw new Error(gl.getProgramInfoLog(prog));
+        } catch (e) {
+          showErr("WebGL 着色器失败：" + e.message + "。已回退 Canvas2D。");
+          startFallback();
+          return;
+        }
+        gl.useProgram(prog);
 
-            // 全屏三角
-            {
-                const buf = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-                const a_pos = gl.getAttribLocation(prog, 'a_pos');
-                gl.enableVertexAttribArray(a_pos);
-                gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
-            }
+        // 全屏三角
+        {
+          const buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(
+            gl.ARRAY_BUFFER,
+            new Float32Array([-1, -1, 3, -1, -1, 3]),
+            gl.STATIC_DRAW
+          );
+          const a_pos = gl.getAttribLocation(prog, "a_pos");
+          gl.enableVertexAttribArray(a_pos);
+          gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+        }
 
-            // uniforms
-            const U = n => gl.getUniformLocation(prog, n);
-            const u_res = U('u_res'),
-                u_time = U('u_time');
-            const u_half0 = U('u_half0'),
-                u_radius4 = U('u_radius4'),
-                u_step = U('u_step');
-            const u_pulseMin = U('u_pulseMin'),
-                u_pulseHz = U('u_pulseHz'),
-                u_pulseOn = U('u_pulseOn');
-            const u_thresh = U('u_thresh'),
-                u_falloff = U('u_falloff'),
-                u_aa = U('u_aa');
-            const u_dispTex = U('u_dispTex'),
-                u_texSize = U('u_texSize'),
-                u_gridMin = U('u_gridMin');
-            const u_scanR = U('u_scanR');
-            const u_pulseMode = U('u_pulseMode');
-            const u_waveLambda = U('u_waveLambda');
+        // uniforms
+        const U = (n) => gl.getUniformLocation(prog, n);
+        const u_res = U("u_res"),
+          u_time = U("u_time");
+        const u_half0 = U("u_half0"),
+          u_radius4 = U("u_radius4"),
+          u_step = U("u_step");
+        const u_pulseMin = U("u_pulseMin"),
+          u_pulseHz = U("u_pulseHz"),
+          u_pulseOn = U("u_pulseOn");
+        const u_thresh = U("u_thresh"),
+          u_falloff = U("u_falloff"),
+          u_aa = U("u_aa");
+        const u_dispTex = U("u_dispTex"),
+          u_texSize = U("u_texSize"),
+          u_gridMin = U("u_gridMin");
+        const u_scanR = U("u_scanR");
+        const u_pulseMode = U("u_pulseMode");
+        const u_waveLambda = U("u_waveLambda");
 
-            function syncStatics() {
-                gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
-                const r = CFG.corner * DPR;
-                gl.uniform4f(u_radius4, r, 0.0, r, 0.0);
-                gl.uniform1f(u_pulseMin, CFG.pulseMin);
-                gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
-                gl.uniform1f(u_pulseOn, 1.0);
-                gl.uniform1f(u_thresh, CFG.threshold);
-                gl.uniform1f(u_aa, CFG.aa * DPR);
-                gl.uniform1i(u_pulseMode, PULSEFX.mode);
-                gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
-                const k = Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR);
-                gl.uniform1f(u_falloff, k);
-                syncStep();
-            }
+        function syncStatics() {
+          gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
+          const r = CFG.corner * DPR;
+          gl.uniform4f(u_radius4, r, 0.0, r, 0.0);
+          gl.uniform1f(u_pulseMin, CFG.pulseMin);
+          gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+          gl.uniform1f(u_pulseOn, 1.0);
+          gl.uniform1f(u_thresh, CFG.threshold);
+          gl.uniform1f(u_aa, CFG.aa * DPR);
+          gl.uniform1i(u_pulseMode, PULSEFX.mode);
+          gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
+          const k = Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR);
+          gl.uniform1f(u_falloff, k);
+          syncStep();
+        }
 
-            function gridMetrics() {
-                const s = CFG.size * DPR;
-                return {
-                    stepX: s * 2.0 + CFG.extraGap * 2 * DPR,
-                    stepY: s + CFG.extraGap * DPR
-                };
-            }
+        function gridMetrics() {
+          const s = CFG.size * DPR;
+          return {
+            stepX: s * 2.0 + CFG.extraGap * 2 * DPR,
+            stepY: s + CFG.extraGap * DPR,
+          };
+        }
 
-            function syncStep() {
-                const s = CFG.size * DPR;
-                const stepX = s * 2.0 + CFG.extraGap * 2 * DPR;
-                const stepY = s + CFG.extraGap * DPR;
-                gl.uniform2f(u_step, stepX, stepY);
-                initSpringField();
-                syncSpringUniforms();
-            }
+        function syncStep() {
+          const s = CFG.size * DPR;
+          const stepX = s * 2.0 + CFG.extraGap * 2 * DPR;
+          const stepY = s + CFG.extraGap * DPR;
+          gl.uniform2f(u_step, stepX, stepY);
+          initSpringField();
+          syncSpringUniforms();
+        }
 
-            function resize() {
-                const w = Math.floor(innerWidth * DPR),
-                    h = Math.floor(innerHeight * DPR);
-                glCanvas.width = w;
-                glCanvas.height = h;
-                glCanvas.style.width = innerWidth + 'px';
-                glCanvas.style.height = innerHeight + 'px';
-                gl.viewport(0, 0, w, h);
-                gl.uniform2f(u_res, w, h);
-                initSpringField();
-                syncSpringUniforms();
-            }
-            addEventListener('resize', resize);
+        function resize() {
+          const w = Math.floor(innerWidth * DPR),
+            h = Math.floor(innerHeight * DPR);
+          glCanvas.width = w;
+          glCanvas.height = h;
+          glCanvas.style.width = innerWidth + "px";
+          glCanvas.style.height = innerHeight + "px";
+          gl.viewport(0, 0, w, h);
+          gl.uniform2f(u_res, w, h);
+          initSpringField();
+          syncSpringUniforms();
+        }
+        addEventListener("resize", resize);
 
-            // ====== 弹簧场 ======
-            let cols = 0,
-                rows = 0,
-                iMin = 0,
-                jMin = 0;
-            let dispArray = null,
-                velArray = null,
-                scaleArray = null,
-                scaleVelArray = null,
-                scaleLock = null;
-            let posKFactor = null,
-                sizeKFactor = null,
-                lastTouch = null;
-            let dispTex = null;
+        // ====== 弹簧场 ======
+        let cols = 0,
+          rows = 0,
+          iMin = 0,
+          jMin = 0;
+        let dispArray = null,
+          velArray = null,
+          scaleArray = null,
+          scaleVelArray = null,
+          scaleLock = null;
+        let posKFactor = null,
+          sizeKFactor = null,
+          lastTouch = null;
+        let dispTex = null;
 
-            function initSpringField() {
-                const w = glCanvas.width,
-                    h = glCanvas.height;
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const iSpan = Math.ceil((w / stepX) + 6),
-                    jSpan = Math.ceil((h / stepY) + 6);
-                iMin = -iSpan;
-                jMin = -jSpan;
-                const iMax = iSpan,
-                    jMax = jSpan;
-                cols = iMax - iMin + 1;
-                rows = jMax - jMin + 1;
+        function initSpringField() {
+          const w = glCanvas.width,
+            h = glCanvas.height;
+          const { stepX, stepY } = gridMetrics();
+          const iSpan = Math.ceil(w / stepX + 6),
+            jSpan = Math.ceil(h / stepY + 6);
+          iMin = -iSpan;
+          jMin = -jSpan;
+          const iMax = iSpan,
+            jMax = jSpan;
+          cols = iMax - iMin + 1;
+          rows = jMax - jMin + 1;
 
-                driveMag = new Float32Array(cols * rows);
-                driveDir = new Float32Array(cols * rows * 2);
-                driveT0 = new Float32Array(cols * rows);
-                dispArray = new Float32Array(cols * rows * 2);
-                velArray = new Float32Array(cols * rows * 2);
-                scaleArray = new Float32Array(cols * rows);
-                scaleVelArray = new Float32Array(cols * rows);
-                scaleLock = new Uint8Array(cols * rows);
-                posKFactor = new Float32Array(cols * rows);
-                sizeKFactor = new Float32Array(cols * rows);
-                lastTouch = new Float64Array(cols * rows);
-                for (let q = 0; q < cols * rows; q++) {
-                    scaleArray[q] = 1.0;
-                    posKFactor[q] = 1.0;
-                    sizeKFactor[q] = 1.0;
-                    lastTouch[q] = 0;
-                }
+          driveMag = new Float32Array(cols * rows);
+          driveDir = new Float32Array(cols * rows * 2);
+          driveT0 = new Float32Array(cols * rows);
+          dispArray = new Float32Array(cols * rows * 2);
+          velArray = new Float32Array(cols * rows * 2);
+          scaleArray = new Float32Array(cols * rows);
+          scaleVelArray = new Float32Array(cols * rows);
+          scaleLock = new Uint8Array(cols * rows);
+          posKFactor = new Float32Array(cols * rows);
+          sizeKFactor = new Float32Array(cols * rows);
+          lastTouch = new Float64Array(cols * rows);
+          for (let q = 0; q < cols * rows; q++) {
+            scaleArray[q] = 1.0;
+            posKFactor[q] = 1.0;
+            sizeKFactor[q] = 1.0;
+            lastTouch[q] = 0;
+          }
 
-                if (!dispTex) dispTex = gl.createTexture();
-                gl.bindTexture(gl.TEXTURE_2D, dispTex);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols, rows, 0, gl.RGBA, gl.FLOAT, new Float32Array(cols *
-                    rows * 4));
-            }
+          if (!dispTex) dispTex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, dispTex);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            cols,
+            rows,
+            0,
+            gl.RGBA,
+            gl.FLOAT,
+            new Float32Array(cols * rows * 4)
+          );
+        }
 
-            function syncSpringUniforms() {
-                gl.uniform2f(u_texSize, cols, rows);
-                gl.uniform2i(u_gridMin, iMin, jMin);
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, dispTex);
-                gl.uniform1i(u_dispTex, 0);
-            }
+        function syncSpringUniforms() {
+          gl.uniform2f(u_texSize, cols, rows);
+          gl.uniform2i(u_gridMin, iMin, jMin);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, dispTex);
+          gl.uniform1i(u_dispTex, 0);
+        }
 
-            const idx2 = (i, j) => {
-                const ii = i - iMin,
-                    jj = j - jMin;
-                if (ii < 0 || ii >= cols || jj < 0 || jj >= rows) return -1;
-                return jj * cols + ii;
-            };
-            const idx = (i, j) => {
-                const base = idx2(i, j);
-                return base < 0 ? -1 : base * 2;
-            };
+        const idx2 = (i, j) => {
+          const ii = i - iMin,
+            jj = j - jMin;
+          if (ii < 0 || ii >= cols || jj < 0 || jj >= rows) return -1;
+          return jj * cols + ii;
+        };
+        const idx = (i, j) => {
+          const base = idx2(i, j);
+          return base < 0 ? -1 : base * 2;
+        };
 
-            function nearestIndex(x, y) {
-                const w = glCanvas.width,
-                    h = glCanvas.height,
-                    Cx = w * 0.5,
-                    Cy = h * 0.5;
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const j = Math.floor((y - Cy) / stepY + 0.5);
-                const ro = (Math.abs(j) % 2) * 0.5;
-                const i = Math.floor((x - Cx - ro * stepX) / stepX + 0.5);
-                return {
-                    i,
-                    j
-                };
-            }
+        function nearestIndex(x, y) {
+          const w = glCanvas.width,
+            h = glCanvas.height,
+            Cx = w * 0.5,
+            Cy = h * 0.5;
+          const { stepX, stepY } = gridMetrics();
+          const j = Math.floor((y - Cy) / stepY + 0.5);
+          const ro = (Math.abs(j) % 2) * 0.5;
+          const i = Math.floor((x - Cx - ro * stepX) / stepX + 0.5);
+          return {
+            i,
+            j,
+          };
+        }
 
-            function centerOf(i, j) {
-                const w = glCanvas.width,
-                    h = glCanvas.height,
-                    Cx = w * 0.5,
-                    Cy = h * 0.5;
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const ro = (Math.abs(j) % 2) * 0.5;
-                return {
-                    cx: Cx + (i + ro) * stepX,
-                    cy: Cy + j * stepY
-                };
-            }
+        function centerOf(i, j) {
+          const w = glCanvas.width,
+            h = glCanvas.height,
+            Cx = w * 0.5,
+            Cy = h * 0.5;
+          const { stepX, stepY } = gridMetrics();
+          const ro = (Math.abs(j) % 2) * 0.5;
+          return {
+            cx: Cx + (i + ro) * stepX,
+            cy: Cy + j * stepY,
+          };
+        }
 
-            function stepSprings() {
-                const now = performance.now() * 0.001;
-                const dtRaw = now - (stepSprings._t || now);
-                stepSprings._t = now;
-                let dt = Math.min(Math.max(dtRaw, 1 / 120), 1 / 30);
+        function stepSprings() {
+          const now = performance.now() * 0.001;
+          const dtRaw = now - (stepSprings._t || now);
+          stepSprings._t = now;
+          let dt = Math.min(Math.max(dtRaw, 1 / 120), 1 / 30);
 
-                // 位移弹簧 + 位移上限
-                {
-                    const invM = 1.0 / SPRING.mass;
-                    for (let j = 0; j < rows; j++) {
-                        for (let i = 0; i < cols; i++) {
-                            const p = (j * cols + i) * 2,
-                                base = j * cols + i;
-                            let x = dispArray[p],
-                                y = dispArray[p + 1];
-                            let vx = velArray[p],
-                                vy = velArray[p + 1];
-                            const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, posKFactor[base])) : 1.0;
-                            const kEff = SPRING.k * fac,
-                                cEff = SPRING.c * Math.sqrt(fac);
-                            const ax = (-kEff * x - cEff * vx) * invM;
-                            const ay = (-kEff * y - cEff * vy) * invM;
-                            vx += ax * dt;
-                            x += vx * dt;
-                            vy += ay * dt;
-                            y += vy * dt;
+          // 位移弹簧 + 位移上限
+          {
+            const invM = 1.0 / SPRING.mass;
+            for (let j = 0; j < rows; j++) {
+              for (let i = 0; i < cols; i++) {
+                const p = (j * cols + i) * 2,
+                  base = j * cols + i;
+                let x = dispArray[p],
+                  y = dispArray[p + 1];
+                let vx = velArray[p],
+                  vy = velArray[p + 1];
+                const fac = REBOUND.enable
+                  ? Math.max(0.05, Math.min(1.0, posKFactor[base]))
+                  : 1.0;
+                const kEff = SPRING.k * fac,
+                  cEff = SPRING.c * Math.sqrt(fac);
+                const ax = (-kEff * x - cEff * vx) * invM;
+                const ay = (-kEff * y - cEff * vy) * invM;
+                vx += ax * dt;
+                x += vx * dt;
+                vy += ay * dt;
+                y += vy * dt;
 
-                            const cap = SPRING.maxDispPx;
-                            if (cap > 0) {
-                                const rr = Math.hypot(x, y);
-                                if (rr > cap) {
-                                    if (SPRING.clampHard) {
-                                        const s = cap / (rr + 1e-6);
-                                        x *= s;
-                                        y *= s;
-                                        const dirx = x / (cap + 1e-6),
-                                            diry = y / (cap + 1e-6);
-                                        const vr = vx * dirx + vy * diry;
-                                        const edgeDamp = 0.6;
-                                        vx -= edgeDamp * vr * dirx;
-                                        vy -= edgeDamp * vr * diry;
-                                    } else {
-                                        const over = rr - cap;
-                                        const dirx = x / (rr + 1e-6),
-                                            diry = y / (rr + 1e-6);
-                                        const kB = SPRING.barrierK > 0 ? SPRING.barrierK : (SPRING.k * 1.5);
-                                        vx -= (kB * over) * dirx * dt;
-                                        vy -= (kB * over) * diry * dt;
-                                    }
-                                }
-                            }
-                            dispArray[p] = x;
-                            dispArray[p + 1] = y;
-                            velArray[p] = vx;
-                            velArray[p + 1] = vy;
-                            if (REBOUND.enable) {
-                                const r = Math.min(1.0, REBOUND.recoverRate * dt);
-                                posKFactor[base] += (1.0 - posKFactor[base]) * r;
-                            }
-                        }
+                const cap = SPRING.maxDispPx;
+                if (cap > 0) {
+                  const rr = Math.hypot(x, y);
+                  if (rr > cap) {
+                    if (SPRING.clampHard) {
+                      const s = cap / (rr + 1e-6);
+                      x *= s;
+                      y *= s;
+                      const dirx = x / (cap + 1e-6),
+                        diry = y / (cap + 1e-6);
+                      const vr = vx * dirx + vy * diry;
+                      const edgeDamp = 0.6;
+                      vx -= edgeDamp * vr * dirx;
+                      vy -= edgeDamp * vr * diry;
+                    } else {
+                      const over = rr - cap;
+                      const dirx = x / (rr + 1e-6),
+                        diry = y / (rr + 1e-6);
+                      const kB =
+                        SPRING.barrierK > 0 ? SPRING.barrierK : SPRING.k * 1.5;
+                      vx -= kB * over * dirx * dt;
+                      vy -= kB * over * diry * dt;
                     }
+                  }
                 }
-
-                // 大小弹簧（锁定到 1.0 防止二次回弹）
-                {
-                    const invMs = 1.0 / SCALE.mass;
-                    for (let j = 0; j < rows; j++) {
-                        for (let i = 0; i < cols; i++) {
-                            const base = j * cols + i;
-                            if (scaleLock[base]) {
-                                scaleArray[base] = 1.0;
-                                scaleVelArray[base] = 0.0;
-                                if (REBOUND.enable) {
-                                    const r = Math.min(1.0, REBOUND.recoverRate * dt);
-                                    sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
-                                }
-                                continue;
-                            }
-                            let s = scaleArray[base],
-                                vs = scaleVelArray[base];
-                            const fac = REBOUND.enable ? Math.max(0.05, Math.min(1.0, sizeKFactor[base])) : 1.0;
-                            const kEff = SCALE.k * fac,
-                                cEff = (2 * Math.sqrt(kEff * SCALE.mass)) * 1.05;
-                            const ds = (1.0 - s);
-                            const as = (kEff * ds - cEff * vs) * invMs;
-                            vs += as * dt;
-                            const sNext = s + vs * dt;
-                            if (s > 1.0 && sNext <= 1.0 && vs < 0.0) {
-                                s = 1.0;
-                                vs = 0.0;
-                                scaleLock[base] = 1;
-                            } else s = sNext;
-                            s = Math.max(0.2, Math.min(3.0, s));
-                            vs = Math.max(-1000, Math.min(1000, vs));
-                            scaleArray[base] = s;
-                            scaleVelArray[base] = vs;
-                            if (REBOUND.enable) {
-                                const r = Math.min(1.0, REBOUND.recoverRate * dt);
-                                sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
-                            }
-                        }
-                    }
+                dispArray[p] = x;
+                dispArray[p + 1] = y;
+                velArray[p] = vx;
+                velArray[p + 1] = vy;
+                if (REBOUND.enable) {
+                  const r = Math.min(1.0, REBOUND.recoverRate * dt);
+                  posKFactor[base] += (1.0 - posKFactor[base]) * r;
                 }
-
-                // 闲置自动收尾
-                {
-                    const rForce = Math.min(1.0, FADE.forceRate * dt);
-                    for (let j = 0; j < rows; j++) {
-                        for (let i = 0; i < cols; i++) {
-                            const base = j * cols + i,
-                                p = base * 2;
-                            const idleSec = now - (lastTouch[base] || 0);
-                            if (idleSec < FADE.idleMs * 0.001) continue;
-
-                            dispArray[p] += (0 - dispArray[p]) * rForce;
-                            dispArray[p + 1] += (0 - dispArray[p + 1]) * rForce;
-                            velArray[p] *= (1 - rForce);
-                            velArray[p + 1] *= (1 - rForce);
-
-                            scaleArray[base] += (1.0 - scaleArray[base]) * rForce;
-                            scaleVelArray[base] *= (1 - rForce);
-
-                            posKFactor[base] += (1.0 - posKFactor[base]) * rForce;
-                            sizeKFactor[base] += (1.0 - sizeKFactor[base]) * rForce;
-
-                            const almostStill =
-                                Math.abs(dispArray[p]) < FADE.restDisp &&
-                                Math.abs(dispArray[p + 1]) < FADE.restDisp &&
-                                Math.abs(velArray[p]) < FADE.restVel &&
-                                Math.abs(velArray[p + 1]) < FADE.restVel &&
-                                Math.abs(scaleArray[base] - 1.0) < FADE.restScaleEps &&
-                                Math.abs(scaleVelArray[base]) < 0.5;
-                            if (almostStill) {
-                                dispArray[p] = 0;
-                                dispArray[p + 1] = 0;
-                                velArray[p] = 0;
-                                velArray[p + 1] = 0;
-                                scaleArray[base] = 1.0;
-                                scaleVelArray[base] = 0.0;
-                                scaleLock[base] = 1;
-                                posKFactor[base] = 1.0;
-                                sizeKFactor[base] = 1.0;
-                                lastTouch[base] = now;
-                            }
-                        }
-                    }
-                }
-
-                // 写纹理 (RG=位移, B=scaleAbs>1?scale:0)
-                {
-                    const tex = new Float32Array(cols * rows * 4);
-                    for (let j = 0; j < rows; j++) {
-                        for (let i = 0; i < cols; i++) {
-                            const base = j * cols + i,
-                                p2 = base * 2,
-                                p4 = base * 4;
-                            tex[p4] = dispArray[p2];
-                            tex[p4 + 1] = dispArray[p2 + 1];
-                            const sAbs = scaleArray[base];
-                            tex[p4 + 2] = (!scaleLock[base] && sAbs > 1.01) ? sAbs : 0.0;
-                            tex[p4 + 3] = 1.0;
-                        }
-                    }
-                    gl.bindTexture(gl.TEXTURE_2D, dispTex);
-                    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cols, rows, gl.RGBA, gl.FLOAT, tex);
-                }
-
-                // 扫描半径（自适应）
-                {
-                    let maxD = 0;
-                    for (let j = 0; j < rows; j++) {
-                        for (let i = 0; i < cols; i++) {
-                            const p2 = (j * cols + i) * 2;
-                            const d = Math.hypot(dispArray[p2], dispArray[p2 + 1]);
-                            if (d > maxD) maxD = d;
-                        }
-                    }
-                    const {
-                        stepX,
-                        stepY
-                    } = gridMetrics();
-                    const stepMin = Math.min(stepX, stepY);
-                    const rCellsNeeded = Math.ceil(maxD / stepMin) + 1;
-                    const MAX_SCAN_JS = 20;
-                    gl.uniform1f(u_scanR, Math.min(rCellsNeeded, MAX_SCAN_JS));
-                }
+              }
             }
+          }
 
-            const cellsToRadiusCells = (n) => Math.max(0.5, Math.sqrt(Math.max(1, n) / Math.PI));
-
-            let lastDirX = 1,
-                lastDirY = 0;
-
-            function injectAOE(x, y, speed, vx, vy) {
-                const sp = Math.hypot(vx, vy);
-                let dirx = lastDirX,
-                    diry = lastDirY;
-                if (sp > 1e-3) {
-                    dirx = vx / sp;
-                    diry = vy / sp;
-                    lastDirX = dirx;
-                    lastDirY = diry;
+          // 大小弹簧（锁定到 1.0 防止二次回弹）
+          {
+            const invMs = 1.0 / SCALE.mass;
+            for (let j = 0; j < rows; j++) {
+              for (let i = 0; i < cols; i++) {
+                const base = j * cols + i;
+                if (scaleLock[base]) {
+                  scaleArray[base] = 1.0;
+                  scaleVelArray[base] = 0.0;
+                  if (REBOUND.enable) {
+                    const r = Math.min(1.0, REBOUND.recoverRate * dt);
+                    sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
+                  }
+                  continue;
                 }
-
-                const sMin = Math.max(0, DROP.speedMin),
-                    sMax = PLUCK.capPx;
-                const s01_raw = (speed - sMin) / Math.max(1, (sMax - sMin));
-                const s01 = Math.max(0, Math.min(1, s01_raw));
-
-                const speedForImpulse = PLUCK.capEnable ? Math.min(speed, PLUCK.capPx) : speed;
-                const gainBase = Math.min(SPRING.maxImpulse, speedForImpulse * SPRING.gainRatio);
-                const mulAbs = 1.0 + s01 * (SCALE.maxScale - 1.0);
-
-                const targetCells = 1 + Math.floor(s01 * (AOE.maxCells - 1));
-                const rCells = cellsToRadiusCells(targetCells);
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const unit = Math.min(stepX, stepY);
-                const rPx = rCells * unit;
-
-                const {
-                    i: ic,
-                    j: jc
-                } = nearestIndex(x, y);
-                const rI = Math.ceil(rPx / stepX) + 1,
-                    rJ = Math.ceil(rPx / stepY) + 1;
-
-                const rFront = rPx * (1 + DROP.front * s01);
-                const rBack = rPx * (1 - 0.20 * s01);
-                const rSide = Math.max(0.4 * rPx, rPx * (1 - DROP.squeeze * s01));
-                const dirPerpX = -diry,
-                    dirPerpY = dirx;
-
-                const posFac = REBOUND.enable ? (1.0 - s01 * (1.0 - REBOUND.posKMin)) : 1.0;
-                const sizeFac = REBOUND.enable ? (1.0 - s01 * (1.0 - REBOUND.sizeKMin)) : 1.0;
-
-                for (let dj = -rJ; dj <= rJ; dj++) {
-                    const j = jc + dj;
-                    for (let di = -rI; di <= rI; di++) {
-                        const i = ic + di;
-                        const base = idx2(i, j);
-                        if (base < 0) continue;
-                        const p = base * 2;
-                        const {
-                            cx,
-                            cy
-                        } = centerOf(i, j);
-                        const dx = cx - x,
-                            dy = cy - y;
-                        const par = dx * dirx + dy * diry;
-                        const perpSigned = dx * dirPerpX + dy * dirPerpY; // 带符号
-                        const perp = Math.abs(perpSigned);
-
-                        // —— 1) 形状权重 wShape ——（椭圆/单尾水滴）
-                        let inside = false;
-                        let wShape = 0.0;
-
-                        if (!DROP.singleTail) {
-                            const rLong = par >= 0 ? rFront : rBack;
-                            const d = Math.sqrt((par * par) / (rLong * rLong) + (perp * perp) / (rSide * rSide));
-                            if (d <= 1.0) {
-                                const t = d;
-                                wShape = 1.0 - (t * t * (3.0 - 2.0 * t));
-                                inside = true;
-                            }
-                        } else {
-                            const headR = Math.max(0.1 * rPx, DROP.headRatio * rPx);
-                            const tailL = rBack;
-                            if (par >= 0.0) {
-                                const dHead = Math.sqrt((par * par) / (headR * headR) + (perp * perp) / (rSide *
-                                    rSide));
-                                if (dHead <= 1.0) {
-                                    const t = dHead;
-                                    wShape = 1.0 - (t * t * (3.0 - 2.0 * t));
-                                    inside = true;
-                                }
-                            } else {
-                                const tau = Math.min(1.0, (-par) / Math.max(1e-6, tailL));
-                                const side = Math.max(0.12 * rSide, rSide * (1.0 - DROP.tailTaper * tau));
-                                const long = Math.max(1e-6, tailL * (1.0 - 0.15 * tau));
-                                const dTail = Math.sqrt((par * par) / (long * long) + (perp * perp) / (side *
-                                    side));
-                                if (dTail <= 1.0) {
-                                    const u = dTail;
-                                    wShape = 1.0 - (u * u * (3.0 - 2.0 * u));
-                                    inside = true;
-                                }
-                            }
-                        }
-
-                        if (!inside) continue;
-
-                        // —— 2) 空间高斯（σ） + amp 放大 ——（统一口）
-                        const r = Math.hypot(dx, dy);
-                        const sig = Math.max(4.0, WAVE.sigma); // σ(px)
-                        const g = Math.exp(-(r * r) / (2.0 * sig * sig)); // 0..1
-                        // 可选 λ 调制（环纹），稳定性优先，默认关闭：
-                        // const mod = Math.max(0.0, Math.cos(r / Math.max(8.0, WAVE.lambda)));
-                        // const w = wShape * g * (0.5 + 0.5*mod);
-                        const w = wShape * g;
-
-                        const ampMul = (WAVE.amp / 20.0); // amp 基准 20 → 放大系数
-                        const gain = (gainBase * ampMul) * w;
-
-                        // —— 注入位移速度
-                        velArray[p] += dirx * gain;
-                        velArray[p + 1] += diry * gain;
-
-                        // —— 注入大小跟随（绝对倍率，基于初始 18）
-                        scaleLock[base] = 0;
-                        const s = scaleArray[base];
-                        const err = (mulAbs - s);
-                        const push = SCALE.followGain * err * w;
-                        const maxPush = 2.0;
-                        scaleVelArray[base] += Math.max(-maxPush, Math.min(maxPush, push));
-
-                        // —— 回弹“软化”因子（随速度降低刚度）
-                        posKFactor[base] = Math.min(posKFactor[base], posFac);
-                        sizeKFactor[base] = Math.min(sizeKFactor[base], sizeFac);
-                        lastTouch[base] = performance.now() * 0.001;
-                    }
+                let s = scaleArray[base],
+                  vs = scaleVelArray[base];
+                const fac = REBOUND.enable
+                  ? Math.max(0.05, Math.min(1.0, sizeKFactor[base]))
+                  : 1.0;
+                const kEff = SCALE.k * fac,
+                  cEff = 2 * Math.sqrt(kEff * SCALE.mass) * 1.05;
+                const ds = 1.0 - s;
+                const as = (kEff * ds - cEff * vs) * invMs;
+                vs += as * dt;
+                const sNext = s + vs * dt;
+                if (s > 1.0 && sNext <= 1.0 && vs < 0.0) {
+                  s = 1.0;
+                  vs = 0.0;
+                  scaleLock[base] = 1;
+                } else s = sNext;
+                s = Math.max(0.2, Math.min(3.0, s));
+                vs = Math.max(-1000, Math.min(1000, vs));
+                scaleArray[base] = s;
+                scaleVelArray[base] = vs;
+                if (REBOUND.enable) {
+                  const r = Math.min(1.0, REBOUND.recoverRate * dt);
+                  sizeKFactor[base] += (1.0 - sizeKFactor[base]) * r;
                 }
+              }
             }
+          }
 
-            function injectPathImpulse(x0, y0, x1, y1, speed, vx, vy) {
-                const dist = Math.hypot(x1 - x0, y1 - y0);
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const unit = 0.65 * Math.min(stepX, stepY);
-                const steps = Math.max(1, Math.ceil(dist / unit));
-                for (let k = 0; k <= steps; k++) {
-                    const t = k / steps;
-                    const x = x0 + (x1 - x0) * t;
-                    const y = y0 + (y1 - y0) * t;
-                    injectAOE(x, y, speed, vx, vy);
+          // 闲置自动收尾
+          {
+            const rForce = Math.min(1.0, FADE.forceRate * dt);
+            for (let j = 0; j < rows; j++) {
+              for (let i = 0; i < cols; i++) {
+                const base = j * cols + i,
+                  p = base * 2;
+                const idleSec = now - (lastTouch[base] || 0);
+                if (idleSec < FADE.idleMs * 0.001) continue;
+
+                dispArray[p] += (0 - dispArray[p]) * rForce;
+                dispArray[p + 1] += (0 - dispArray[p + 1]) * rForce;
+                velArray[p] *= 1 - rForce;
+                velArray[p + 1] *= 1 - rForce;
+
+                scaleArray[base] += (1.0 - scaleArray[base]) * rForce;
+                scaleVelArray[base] *= 1 - rForce;
+
+                posKFactor[base] += (1.0 - posKFactor[base]) * rForce;
+                sizeKFactor[base] += (1.0 - sizeKFactor[base]) * rForce;
+
+                const almostStill =
+                  Math.abs(dispArray[p]) < FADE.restDisp &&
+                  Math.abs(dispArray[p + 1]) < FADE.restDisp &&
+                  Math.abs(velArray[p]) < FADE.restVel &&
+                  Math.abs(velArray[p + 1]) < FADE.restVel &&
+                  Math.abs(scaleArray[base] - 1.0) < FADE.restScaleEps &&
+                  Math.abs(scaleVelArray[base]) < 0.5;
+                if (almostStill) {
+                  dispArray[p] = 0;
+                  dispArray[p + 1] = 0;
+                  velArray[p] = 0;
+                  velArray[p + 1] = 0;
+                  scaleArray[base] = 1.0;
+                  scaleVelArray[base] = 0.0;
+                  scaleLock[base] = 1;
+                  posKFactor[base] = 1.0;
+                  sizeKFactor[base] = 1.0;
+                  lastTouch[base] = now;
                 }
+              }
             }
+          }
 
-            // ====== 交互 ======
-            let pluckOn = true,
-                pulseOn = true;
-            let savedPulseMin = CFG.pulseMin;
-            const btnPulse = document.getElementById('pulse');
-            const btnPluck = document.getElementById('pluck');
-            btnPulse.onclick = () => {
-                pulseOn = !pulseOn;
-                btnPulse.setAttribute('aria-pressed', pulseOn);
-                btnPulse.textContent = `脉动：${pulseOn?'开':'关'} (P)`;
-                if (pulseOn) {
-                    gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
-                    gl.uniform1f(u_pulseMin, savedPulseMin);
-                    gl.uniform1f(u_pulseOn, 1.0);
+          // 写纹理 (RG=位移, B=scaleAbs>1?scale:0)
+          {
+            const tex = new Float32Array(cols * rows * 4);
+            for (let j = 0; j < rows; j++) {
+              for (let i = 0; i < cols; i++) {
+                const base = j * cols + i,
+                  p2 = base * 2,
+                  p4 = base * 4;
+                tex[p4] = dispArray[p2];
+                tex[p4 + 1] = dispArray[p2 + 1];
+                const sAbs = scaleArray[base];
+                tex[p4 + 2] = !scaleLock[base] && sAbs > 1.01 ? sAbs : 0.0;
+                tex[p4 + 3] = 1.0;
+              }
+            }
+            gl.bindTexture(gl.TEXTURE_2D, dispTex);
+            gl.texSubImage2D(
+              gl.TEXTURE_2D,
+              0,
+              0,
+              0,
+              cols,
+              rows,
+              gl.RGBA,
+              gl.FLOAT,
+              tex
+            );
+          }
+
+          // 扫描半径（自适应）
+          {
+            let maxD = 0;
+            for (let j = 0; j < rows; j++) {
+              for (let i = 0; i < cols; i++) {
+                const p2 = (j * cols + i) * 2;
+                const d = Math.hypot(dispArray[p2], dispArray[p2 + 1]);
+                if (d > maxD) maxD = d;
+              }
+            }
+            const { stepX, stepY } = gridMetrics();
+            const stepMin = Math.min(stepX, stepY);
+            const rCellsNeeded = Math.ceil(maxD / stepMin) + 1;
+            const MAX_SCAN_JS = 48;
+            gl.uniform1f(u_scanR, Math.min(rCellsNeeded, MAX_SCAN_JS));
+          }
+        }
+
+        const cellsToRadiusCells = (n) =>
+          Math.max(0.5, Math.sqrt(Math.max(1, n) / Math.PI));
+
+        let lastDirX = 1,
+          lastDirY = 0;
+
+        function injectAOE(x, y, speed, vx, vy) {
+          const sp = Math.hypot(vx, vy);
+          let dirx = lastDirX,
+            diry = lastDirY;
+          if (sp > 1e-3) {
+            dirx = vx / sp;
+            diry = vy / sp;
+            lastDirX = dirx;
+            lastDirY = diry;
+          }
+
+          const sMin = Math.max(0, DROP.speedMin),
+            sMax = PLUCK.capPx;
+          const s01_raw = (speed - sMin) / Math.max(1, sMax - sMin);
+          const s01 = Math.max(0, Math.min(1, s01_raw));
+
+          const speedForImpulse = PLUCK.capEnable
+            ? Math.min(speed, PLUCK.capPx)
+            : speed;
+          const gainBase = Math.min(
+            SPRING.maxImpulse,
+            speedForImpulse * SPRING.gainRatio
+          );
+          const mulAbs = 1.0 + s01 * (SCALE.maxScale - 1.0);
+
+          const targetCells = 1 + Math.floor(s01 * (AOE.maxCells - 1));
+          const rCells = cellsToRadiusCells(targetCells);
+          const { stepX, stepY } = gridMetrics();
+          const unit = Math.min(stepX, stepY);
+          const rPx = rCells * unit;
+
+          const { i: ic, j: jc } = nearestIndex(x, y);
+          const rI = Math.ceil(rPx / stepX) + 1,
+            rJ = Math.ceil(rPx / stepY) + 1;
+
+          const rFront = rPx * (1 + DROP.front * s01);
+          const rBack = rPx * (1 - 0.2 * s01);
+          const rSide = Math.max(0.4 * rPx, rPx * (1 - DROP.squeeze * s01));
+          const dirPerpX = -diry,
+            dirPerpY = dirx;
+
+          const posFac = REBOUND.enable
+            ? 1.0 - s01 * (1.0 - REBOUND.posKMin)
+            : 1.0;
+          const sizeFac = REBOUND.enable
+            ? 1.0 - s01 * (1.0 - REBOUND.sizeKMin)
+            : 1.0;
+
+          for (let dj = -rJ; dj <= rJ; dj++) {
+            const j = jc + dj;
+            for (let di = -rI; di <= rI; di++) {
+              const i = ic + di;
+              const base = idx2(i, j);
+              if (base < 0) continue;
+              const p = base * 2;
+              const { cx, cy } = centerOf(i, j);
+              const dx = cx - x,
+                dy = cy - y;
+              const par = dx * dirx + dy * diry;
+              const perpSigned = dx * dirPerpX + dy * dirPerpY; // 带符号
+              const perp = Math.abs(perpSigned);
+
+              // —— 1) 形状权重 wShape ——（椭圆/单尾水滴）
+              let inside = false;
+              let wShape = 0.0;
+
+              let tNorm = 1.0;
+
+              if (!DROP.singleTail) {
+                const rLong = par >= 0 ? rFront : rBack;
+                const d = Math.sqrt(
+                  (par * par) / (rLong * rLong) +
+                    (perp * perp) / (rSide * rSide)
+                );
+                if (d <= 1.0) {
+                  const t = d;
+                  wShape = 1.0 - t * t * (3.0 - 2.0 * t);
+                  tNorm = Math.min(1.0, Math.max(0.0, d)); // ★ 记录归一化距离
+                  inside = true;
+                }
+              } else {
+                const headR = Math.max(0.1 * rPx, DROP.headRatio * rPx);
+                const tailL = rBack;
+                if (par >= 0.0) {
+                  const dHead = Math.sqrt(
+                    (par * par) / (headR * headR) +
+                      (perp * perp) / (rSide * rSide)
+                  );
+                  if (dHead <= 1.0) {
+                    const t = dHead;
+                    wShape = 1.0 - t * t * (3.0 - 2.0 * t);
+                    tNorm = Math.min(1.0, Math.max(0.0, dHead)); // ★ 记录
+                    inside = true;
+                  }
                 } else {
-                    gl.uniform1f(u_pulseHz, 0.0);
-                    gl.uniform1f(u_pulseMin, 1.0);
-                    gl.uniform1f(u_pulseOn, 0.0);
+                  const tau = Math.min(1.0, -par / Math.max(1e-6, tailL));
+                  const side = Math.max(
+                    0.12 * rSide,
+                    rSide * (1.0 - DROP.tailTaper * tau)
+                  );
+                  const long = Math.max(1e-6, tailL * (1.0 - 0.15 * tau));
+                  const dTail = Math.sqrt(
+                    (par * par) / (long * long) + (perp * perp) / (side * side)
+                  );
+                  if (dTail <= 1.0) {
+                    const u = dTail;
+                    wShape = 1.0 - u * u * (3.0 - 2.0 * u);
+                    tNorm = Math.min(1.0, Math.max(0.0, dTail)); // ★ 记录
+                    inside = true;
+                  }
                 }
-            };
-            btnPluck.onclick = () => {
-                pluckOn = !pluckOn;
-                btnPluck.setAttribute('aria-pressed', pluckOn);
-                btnPluck.textContent = `拨动：${pluckOn?'开':'关'} (O)`;
-            };
-            addEventListener('keydown', e => {
-                if (e.key === 'p' || e.key === 'P') btnPulse.click();
-                if (e.key === 'o' || e.key === 'O') btnPluck.click();
-            });
+              }
 
-            // ====== UI 绑定 ======
-            const id = x => document.getElementById(x);
-            const sizeR = id('sizeRange'),
-                gapR = id('gapRange'),
-                radR = id('radiusRange'),
-                spdR = id('speedRange'),
-                crR = id('crRange'),
-                thR = id('thRange'),
-                sigR = id('sigRange'),
-                lamR = id('lamRange'),
-                fqR = id('fqRange'),
-                gamR = id('gamRange'),
-                ratioR = id('ratioRange'),
-                delayR = id('delayRange'),
-                speedCapR = id('speedCapRange'),
-                speedEffR = id('speedEffRange'),
-                maxCellsR = id('maxCellsRange'),
-                maxScaleR = id('maxScaleRange'),
-                pluckCapR = id('pluckCapRange'),
-                fadeRateR = id('fadeRateRange'),
-                speedMinR = id('speedMinRange'),
-                dropFrontR = id('dropFrontRange'),
-                dropSqueezeR = id('dropSqueezeRange'),
-                pulseLamR = id('pulseLamRange'),
-                maxDispR = id('maxDispRange');
+              if (!inside) continue;
 
-            const vSize = id('vSize'),
-                vGap = id('vGap'),
-                vRad = id('vRadius'),
-                vSpd = id('vSpeed'),
-                vCR = id('vCR'),
-                vTh = id('vTh'),
-                vSig = id('vSig'),
-                vLam = id('vLam'),
-                vFq = id('vFq'),
-                vGam = id('vGam'),
-                vRatio = id('vRatio'),
-                vDelay = id('vDelay'),
-                vSCap = id('vSCap'),
-                vSEff = id('vSEff'),
-                vMS = id('vMS'),
-                vMaxCells = id('vMaxCells'),
-                vMaxScale = id('vMaxScale'),
-                vPluckCap = id('vPluckCap'),
-                vFadeRate = id('vFadeRate'),
-                vSpeedMin = id('vSpeedMin'),
-                vDropFront = id('vDropFront'),
-                vDropSqueeze = id('vDropSqueeze'),
-                vPulseLam = id('vPulseLam'),
-                vMaxDisp = id('vMaxDisp');
+              // —— 2) 空间高斯（σ） + amp 放大 ——（统一口）
+              const r = Math.hypot(dx, dy);
+              const sig = Math.max(4.0, WAVE.sigma); // σ(px)
+              const g = Math.exp(-(r * r) / (2.0 * sig * sig)); // 0..1
+              // 可选 λ 调制（环纹），稳定性优先，默认关闭：
+              // const mod = Math.max(0.0, Math.cos(r / Math.max(8.0, WAVE.lambda)));
+              // const w = wShape * g * (0.5 + 0.5*mod);
+              const w = wShape * g;
 
-            const capToggle = document.getElementById('capToggle');
+              const radFactor = Math.max(
+                SCALE.radFloor,
+                1.0 - Math.pow(tNorm, SCALE.radAlpha)
+              );
 
-            function initSliders() {
-                maxDispR.value = SPRING.maxDispPx;
-                vMaxDisp.textContent = SPRING.maxDispPx + ' px';
+              const ampMul = WAVE.amp / 20.0; // amp 基准 20 → 放大系数
+              const gain = gainBase * ampMul * w;
 
-                sizeR.value = CFG.size;
-                vSize.textContent = CFG.size + ' px';
-                gapR.value = CFG.extraGap;
-                vGap.textContent = CFG.extraGap + ' px';
-                radR.value = CFG.corner;
-                vRad.textContent = CFG.corner + ' px';
-                spdR.value = CFG.pulseSpeedHz;
-                vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + ' Hz';
-                crR.value = CFG.connectRange;
-                vCR.textContent = CFG.connectRange.toFixed(1) + ' px';
-                thR.value = CFG.threshold;
-                vTh.textContent = CFG.threshold.toFixed(2);
+              // —— 注入位移速度
+              velArray[p] += dirx * gain;
+              velArray[p + 1] += diry * gain;
 
-                sigR.value = WAVE.sigma;
-                vSig.textContent = WAVE.sigma.toFixed(0) + ' px';
-                lamR.value = WAVE.lambda;
-                vLam.textContent = WAVE.lambda.toFixed(0) + ' px';
-                fqR.value = WAVE.freq;
-                vFq.textContent = WAVE.freq.toFixed(2) + ' Hz';
-                gamR.value = WAVE.gamma;
-                vGam.textContent = WAVE.gamma.toFixed(2);
+              // —— 注入大小跟随（绝对倍率，基于初始 18）
+              scaleLock[base] = 0;
+              const s = scaleArray[base];
+              const err = mulAbs - s;
+              const push = SCALE.followGain * err * w;
+              const maxPush = 2.0;
+              scaleVelArray[base] += Math.max(
+                -maxPush,
+                Math.min(maxPush, push)
+              );
 
-                ratioR.value = PLUCK.ratio;
-                vRatio.textContent = PLUCK.ratio.toFixed(3);
-                delayR.value = PLUCK.delayMs;
-                vDelay.textContent = PLUCK.delayMs + ' ms';
-
-                speedCapR.value = SPEEDBIND.capPx;
-                vSCap.textContent = SPEEDBIND.capPx + ' px/s';
-                speedEffR.value = SPEEDBIND.effect;
-                vSEff.textContent = SPEEDBIND.effect.toFixed(2);
-
-                maxCellsR.value = AOE.maxCells;
-                vMaxCells.textContent = AOE.maxCells.toString();
-                maxScaleR.value = SCALE.maxScale;
-                vMaxScale.textContent = SCALE.maxScale.toFixed(2) + '×';
-
-                pluckCapR.value = PLUCK.capPx;
-                vPluckCap.textContent = PLUCK.capPx + ' px/s';
-                capToggle.setAttribute('aria-pressed', PLUCK.capEnable);
-                capToggle.textContent = `拨动限速：${PLUCK.capEnable?'开':'关'}`;
-
-                fadeRateR.value = FADE.forceRate;
-                vFadeRate.textContent = FADE.forceRate.toFixed(1) + '/s';
-                speedMinR.value = DROP.speedMin;
-                vSpeedMin.textContent = DROP.speedMin + ' px/s';
-                dropFrontR.value = DROP.front;
-                vDropFront.textContent = DROP.front.toFixed(2);
-                dropSqueezeR.value = DROP.squeeze;
-                vDropSqueeze.textContent = DROP.squeeze.toFixed(2);
-
-                pulseLamR.value = PULSEFX.lambdaPx;
-                vPulseLam.textContent = PULSEFX.lambdaPx + ' px';
-                document.querySelectorAll('input[name="pulseMode"]').forEach(r => {
-                    r.checked = (Number(r.value) === PULSEFX.mode);
-                });
-
-                vMS.textContent = '0 px/s';
+              // —— 回弹“软化”因子（随速度降低刚度）
+              posKFactor[base] = Math.min(posKFactor[base], posFac);
+              sizeKFactor[base] = Math.min(sizeKFactor[base], sizeFac);
+              lastTouch[base] = performance.now() * 0.001;
             }
+          }
+        }
 
-            maxDispR.oninput = () => {
-                SPRING.maxDispPx = +maxDispR.value;
-                vMaxDisp.textContent = SPRING.maxDispPx + ' px';
-            };
+        function injectPathImpulse(x0, y0, x1, y1, speed, vx, vy) {
+          const dist = Math.hypot(x1 - x0, y1 - y0);
+          const { stepX, stepY } = gridMetrics();
+          const unit = 0.65 * Math.min(stepX, stepY);
+          const steps = Math.max(1, Math.ceil(dist / unit));
+          for (let k = 0; k <= steps; k++) {
+            const t = k / steps;
+            const x = x0 + (x1 - x0) * t;
+            const y = y0 + (y1 - y0) * t;
+            injectAOE(x, y, speed, vx, vy);
+          }
+        }
 
-            sizeR.oninput = () => {
-                CFG.size = +sizeR.value;
-                vSize.textContent = CFG.size + ' px';
-                syncStatics();
-            };
-            gapR.oninput = () => {
-                CFG.extraGap = +gapR.value;
-                vGap.textContent = CFG.extraGap + ' px';
-                syncStep();
-            };
-            radR.oninput = () => {
-                CFG.corner = +radR.value;
-                vRad.textContent = CFG.corner + ' px';
-                syncStatics();
-            };
-            spdR.oninput = () => {
-                CFG.pulseSpeedHz = +spdR.value;
-                vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + ' Hz';
-                gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
-            };
-            crR.oninput = () => {
-                CFG.connectRange = +crR.value;
-                vCR.textContent = CFG.connectRange.toFixed(1) + ' px';
-                gl.uniform1f(u_falloff, Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR));
-            };
-            thR.oninput = () => {
-                CFG.threshold = +thR.value;
-                vTh.textContent = CFG.threshold.toFixed(2);
-                gl.uniform1f(u_thresh, CFG.threshold);
-            };
+        // ====== 交互 ======
+        let pluckOn = true,
+          pulseOn = true;
+        let savedPulseMin = CFG.pulseMin;
+        const btnPulse = document.getElementById("pulse");
+        const btnPluck = document.getElementById("pluck");
+        btnPulse.onclick = () => {
+          pulseOn = !pulseOn;
+          btnPulse.setAttribute("aria-pressed", pulseOn);
+          btnPulse.textContent = `脉动：${pulseOn ? "开" : "关"} (P)`;
+          if (pulseOn) {
+            gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz); // 设置脉动速度
+            gl.uniform1f(u_pulseMin, savedPulseMin); // 恢复最小脉动强度
+            gl.uniform1f(u_pulseOn, 1.0); // 开启脉动效果
+          } else {
+            gl.uniform1f(u_pulseHz, 0.0); // 停止脉动
+            gl.uniform1f(u_pulseMin, 1.0); // 最小脉动强度 1.0
+            gl.uniform1f(u_pulseOn, 0.0); // 关闭脉动效果（节省计算）
+          }
+        };
+        btnPluck.onclick = () => {
+          pluckOn = !pluckOn;
+          btnPluck.setAttribute("aria-pressed", pluckOn);
+          btnPluck.textContent = `拨动：${pluckOn ? "开" : "关"} (O)`;
+        };
+        addEventListener("keydown", (e) => {
+          if (e.key === "p" || e.key === "P") btnPulse.click();
+          if (e.key === "o" || e.key === "O") btnPluck.click();
+        });
 
-            sigR.oninput = () => {
-                WAVE.sigma = +sigR.value;
-                vSig.textContent = WAVE.sigma.toFixed(0) + ' px';
-            };
-            lamR.oninput = () => {
-                WAVE.lambda = +lamR.value;
-                vLam.textContent = WAVE.lambda.toFixed(0) + ' px';
-            };
-            fqR.oninput = () => {
-                WAVE.freq = +fqR.value;
-                vFq.textContent = WAVE.freq.toFixed(2) + ' Hz';
-            };
-            gamR.oninput = () => {
-                WAVE.gamma = +gamR.value;
-                vGam.textContent = WAVE.gamma.toFixed(2);
-            };
+        // ====== UI 绑定 ======
+        const id = (x) => document.getElementById(x);
+        const sizeR = id("sizeRange"),
+          gapR = id("gapRange"),
+          radR = id("radiusRange"),
+          spdR = id("speedRange"),
+          crR = id("crRange"),
+          thR = id("thRange"),
+          sigR = id("sigRange"),
+          lamR = id("lamRange"),
+          fqR = id("fqRange"),
+          gamR = id("gamRange"),
+          ratioR = id("ratioRange"),
+          delayR = id("delayRange"),
+          speedCapR = id("speedCapRange"),
+          speedEffR = id("speedEffRange"),
+          maxCellsR = id("maxCellsRange"),
+          maxScaleR = id("maxScaleRange"),
+          pluckCapR = id("pluckCapRange"),
+          fadeRateR = id("fadeRateRange"),
+          speedMinR = id("speedMinRange"),
+          dropFrontR = id("dropFrontRange"),
+          dropSqueezeR = id("dropSqueezeRange"),
+          pulseLamR = id("pulseLamRange"),
+          maxDispR = id("maxDispRange");
 
-            ratioR.oninput = () => {
-                PLUCK.ratio = +ratioR.value;
-                vRatio.textContent = PLUCK.ratio.toFixed(3);
-            };
-            delayR.oninput = () => {
-                PLUCK.delayMs = +delayR.value;
-                vDelay.textContent = PLUCK.delayMs + ' ms';
-            };
-            speedCapR.oninput = () => {
-                SPEEDBIND.capPx = +speedCapR.value;
-                vSCap.textContent = SPEEDBIND.capPx + ' px/s';
-            };
-            speedEffR.oninput = () => {
-                SPEEDBIND.effect = +speedEffR.value;
-                vSEff.textContent = SPEEDBIND.effect.toFixed(2);
-            };
-            maxCellsR.oninput = () => {
-                AOE.maxCells = +maxCellsR.value;
-                vMaxCells.textContent = AOE.maxCells.toString();
-            };
-            maxScaleR.oninput = () => {
-                SCALE.maxScale = +maxScaleR.value;
-                vMaxScale.textContent = SCALE.maxScale.toFixed(2) + '×';
-            };
-            pluckCapR.oninput = () => {
-                PLUCK.capPx = +pluckCapR.value;
-                vPluckCap.textContent = PLUCK.capPx + ' px/s';
-            };
-            capToggle.onclick = () => {
-                PLUCK.capEnable = !PLUCK.capEnable;
-                capToggle.setAttribute('aria-pressed', PLUCK.capEnable);
-                capToggle.textContent = `拨动限速：${PLUCK.capEnable?'开':'关'}`;
-            };
+        const vSize = id("vSize"),
+          vGap = id("vGap"),
+          vRad = id("vRadius"),
+          vSpd = id("vSpeed"),
+          vCR = id("vCR"),
+          vTh = id("vTh"),
+          vSig = id("vSig"),
+          vLam = id("vLam"),
+          vFq = id("vFq"),
+          vGam = id("vGam"),
+          vRatio = id("vRatio"),
+          vDelay = id("vDelay"),
+          vSCap = id("vSCap"),
+          vSEff = id("vSEff"),
+          vMS = id("vMS"),
+          vMaxCells = id("vMaxCells"),
+          vMaxScale = id("vMaxScale"),
+          vPluckCap = id("vPluckCap"),
+          vFadeRate = id("vFadeRate"),
+          vSpeedMin = id("vSpeedMin"),
+          vDropFront = id("vDropFront"),
+          vDropSqueeze = id("vDropSqueeze"),
+          vPulseLam = id("vPulseLam"),
+          vMaxDisp = id("vMaxDisp");
 
-            document.querySelectorAll('input[name="pulseMode"]').forEach(r => {
-                r.addEventListener('change', () => {
-                    const val = Number(r.value);
-                    if (val === 1 || val === 2) {
-                        PULSEFX.mode = val;
-                        gl.uniform1i(u_pulseMode, PULSEFX.mode);
-                    }
-                });
-            });
-            pulseLamR.oninput = () => {
-                PULSEFX.lambdaPx = +pulseLamR.value;
-                vPulseLam.textContent = PULSEFX.lambdaPx + ' px';
-                gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
-            };
+        const capToggle = document.getElementById("capToggle");
 
-            fadeRateR.oninput = () => {
-                FADE.forceRate = +fadeRateR.value;
-                vFadeRate.textContent = FADE.forceRate.toFixed(1) + '/s';
-            };
-            speedMinR.oninput = () => {
-                DROP.speedMin = +speedMinR.value;
-                vSpeedMin.textContent = DROP.speedMin + ' px/s';
-            };
-            dropFrontR.oninput = () => {
-                DROP.front = +dropFrontR.value;
-                vDropFront.textContent = DROP.front.toFixed(2);
-            };
-            dropSqueezeR.oninput = () => {
-                DROP.squeeze = +dropSqueezeR.value;
-                vDropSqueeze.textContent = DROP.squeeze.toFixed(2);
-            };
+        function initSliders() {
+          maxDispR.value = SPRING.maxDispPx;
+          vMaxDisp.textContent = SPRING.maxDispPx + " px";
 
-            // 鼠标
-            const mouse = {
-                x: 0,
-                y: 0,
-                t: 0
-            };
-            let instSpeed = 0,
-                smoothSpeed = 0;
-            addEventListener('pointermove', e => {
-                const rect = glCanvas.getBoundingClientRect();
-                const x = (e.clientX - rect.left) * DPR;
-                const y = glCanvas.height - (e.clientY - rect.top) * DPR; // 自下向上
+          sizeR.value = CFG.size;
+          vSize.textContent = CFG.size + " px";
+          gapR.value = CFG.extraGap;
+          vGap.textContent = CFG.extraGap + " px";
+          radR.value = CFG.corner;
+          vRad.textContent = CFG.corner + " px";
+          spdR.value = CFG.pulseSpeedHz;
+          vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
+          crR.value = CFG.connectRange;
+          vCR.textContent = CFG.connectRange.toFixed(1) + " px";
+          thR.value = CFG.threshold;
+          vTh.textContent = CFG.threshold.toFixed(2);
 
-                const now = performance.now() * 0.001;
-                const dt = Math.max(1e-3, now - (mouse.t || now));
-                const vx = (x - (mouse.x || x)) / dt,
-                    vy = (y - (mouse.y || y)) / dt;
-                instSpeed = Math.hypot(vx, vy);
-                smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
-                vMS.textContent = Math.round(smoothSpeed) + ' px/s';
+          sigR.value = WAVE.sigma;
+          vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+          lamR.value = WAVE.lambda;
+          vLam.textContent = WAVE.lambda.toFixed(0) + " px";
+          fqR.value = WAVE.freq;
+          vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+          gamR.value = WAVE.gamma;
+          vGam.textContent = WAVE.gamma.toFixed(2);
 
-                if (pluckOn) {
-                    const wasFast = (window.__prevSpeed || 0) > STOP.high;
-                    const nowSlow = instSpeed < STOP.low;
-                    if (wasFast && nowSlow) settleBubble(x, y);
-                    window.__prevSpeed = instSpeed;
+          ratioR.value = PLUCK.ratio;
+          vRatio.textContent = PLUCK.ratio.toFixed(3);
+          delayR.value = PLUCK.delayMs;
+          vDelay.textContent = PLUCK.delayMs + " ms";
 
-                    if (instSpeed > PLUCK.speedThreshold || (now - (mouse.t || 0)) > 0.08) {
-                        injectPathImpulse(mouse.x || x, mouse.y || y, x, y, instSpeed, vx, vy);
-                    }
-                }
-                mouse.x = x;
-                mouse.y = y;
-                mouse.t = now;
-            }, {
-                passive: true
-            });
+          speedCapR.value = SPEEDBIND.capPx;
+          vSCap.textContent = SPEEDBIND.capPx + " px/s";
+          speedEffR.value = SPEEDBIND.effect;
+          vSEff.textContent = SPEEDBIND.effect.toFixed(2);
 
-            addEventListener('pointerdown', e => {
-                const rect = glCanvas.getBoundingClientRect();
-                const x = (e.clientX - rect.left) * DPR;
-                const y = glCanvas.height - (e.clientY - rect.top) * DPR;
-                mouse.x = x;
-                mouse.y = y;
-                mouse.t = performance.now() * 0.001;
-                injectAOE(x, y, 800, 1, 0);
-            }, {
-                passive: true
-            });
+          maxCellsR.value = AOE.maxCells;
+          vMaxCells.textContent = AOE.maxCells.toString();
+          maxScaleR.value = SCALE.maxScale;
+          vMaxScale.textContent = SCALE.maxScale.toFixed(2) + "×";
 
-            function settleBubble(x, y) {
-                const {
-                    stepX,
-                    stepY
-                } = gridMetrics();
-                const unit = Math.min(stepX, stepY);
-                const rPx = STOP.radiusCells * unit;
-                const {
-                    i: ic,
-                    j: jc
-                } = nearestIndex(x, y);
-                const rI = Math.ceil(rPx / stepX) + 1,
-                    rJ = Math.ceil(rPx / stepY) + 1;
-                for (let dj = -rJ; dj <= rJ; dj++) {
-                    const j = jc + dj;
-                    for (let di = -rI; di <= rI; di++) {
-                        const i = ic + di;
-                        const base = idx2(i, j);
-                        if (base < 0) continue;
-                        const p = base * 2;
-                        const {
-                            cx,
-                            cy
-                        } = centerOf(i, j);
-                        const dx = cx - x,
-                            dy = cy - y;
-                        if (Math.hypot(dx, dy) > rPx) continue;
-                        posKFactor[base] = 1.0;
-                        sizeKFactor[base] = 1.0;
-                        velArray[p] *= STOP.velCut;
-                        velArray[p + 1] *= STOP.velCut;
-                        if (Math.abs(scaleArray[base] - 1.0) <= FADE.restScaleEps) {
-                            scaleArray[base] = 1.0;
-                            scaleVelArray[base] = 0.0;
-                            scaleLock[base] = 1;
-                        }
-                        lastTouch[base] = performance.now() * 0.001;
-                    }
-                }
+          pluckCapR.value = PLUCK.capPx;
+          vPluckCap.textContent = PLUCK.capPx + " px/s";
+          capToggle.setAttribute("aria-pressed", PLUCK.capEnable);
+          capToggle.textContent = `拨动限速：${PLUCK.capEnable ? "开" : "关"}`;
+
+          fadeRateR.value = FADE.forceRate;
+          vFadeRate.textContent = FADE.forceRate.toFixed(1) + "/s";
+          speedMinR.value = DROP.speedMin;
+          vSpeedMin.textContent = DROP.speedMin + " px/s";
+          dropFrontR.value = DROP.front;
+          vDropFront.textContent = DROP.front.toFixed(2);
+          dropSqueezeR.value = DROP.squeeze;
+          vDropSqueeze.textContent = DROP.squeeze.toFixed(2);
+
+          pulseLamR.value = PULSEFX.lambdaPx;
+          vPulseLam.textContent = PULSEFX.lambdaPx + " px";
+          document.querySelectorAll('input[name="pulseMode"]').forEach((r) => {
+            r.checked = Number(r.value) === PULSEFX.mode;
+          });
+
+          vMS.textContent = "0 px/s";
+        }
+
+        maxDispR.oninput = () => {
+          SPRING.maxDispPx = +maxDispR.value;
+          vMaxDisp.textContent = SPRING.maxDispPx + " px";
+        };
+
+        sizeR.oninput = () => {
+          CFG.size = +sizeR.value;
+          vSize.textContent = CFG.size + " px";
+          syncStatics();
+        };
+        gapR.oninput = () => {
+          CFG.extraGap = +gapR.value;
+          vGap.textContent = CFG.extraGap + " px";
+          syncStep();
+        };
+        radR.oninput = () => {
+          CFG.corner = +radR.value;
+          vRad.textContent = CFG.corner + " px";
+          syncStatics();
+        };
+        spdR.oninput = () => {
+          CFG.pulseSpeedHz = +spdR.value;
+          vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
+          gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+        };
+        crR.oninput = () => {
+          CFG.connectRange = +crR.value;
+          vCR.textContent = CFG.connectRange.toFixed(1) + " px";
+          gl.uniform1f(
+            u_falloff,
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
+          );
+        };
+        thR.oninput = () => {
+          CFG.threshold = +thR.value;
+          vTh.textContent = CFG.threshold.toFixed(2);
+          gl.uniform1f(u_thresh, CFG.threshold);
+        };
+
+        sigR.oninput = () => {
+          WAVE.sigma = +sigR.value;
+          vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+        };
+        lamR.oninput = () => {
+          WAVE.lambda = +lamR.value;
+          vLam.textContent = WAVE.lambda.toFixed(0) + " px";
+        };
+        fqR.oninput = () => {
+          WAVE.freq = +fqR.value;
+          vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+        };
+        gamR.oninput = () => {
+          WAVE.gamma = +gamR.value;
+          vGam.textContent = WAVE.gamma.toFixed(2);
+        };
+
+        ratioR.oninput = () => {
+          PLUCK.ratio = +ratioR.value;
+          vRatio.textContent = PLUCK.ratio.toFixed(3);
+        };
+        delayR.oninput = () => {
+          PLUCK.delayMs = +delayR.value;
+          vDelay.textContent = PLUCK.delayMs + " ms";
+        };
+        speedCapR.oninput = () => {
+          SPEEDBIND.capPx = +speedCapR.value;
+          vSCap.textContent = SPEEDBIND.capPx + " px/s";
+        };
+        speedEffR.oninput = () => {
+          SPEEDBIND.effect = +speedEffR.value;
+          vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+        };
+        maxCellsR.oninput = () => {
+          AOE.maxCells = +maxCellsR.value;
+          vMaxCells.textContent = AOE.maxCells.toString();
+        };
+        maxScaleR.oninput = () => {
+          SCALE.maxScale = +maxScaleR.value;
+          vMaxScale.textContent = SCALE.maxScale.toFixed(2) + "×";
+        };
+        pluckCapR.oninput = () => {
+          PLUCK.capPx = +pluckCapR.value;
+          vPluckCap.textContent = PLUCK.capPx + " px/s";
+        };
+        capToggle.onclick = () => {
+          PLUCK.capEnable = !PLUCK.capEnable;
+          capToggle.setAttribute("aria-pressed", PLUCK.capEnable);
+          capToggle.textContent = `拨动限速：${PLUCK.capEnable ? "开" : "关"}`;
+        };
+
+        document.querySelectorAll('input[name="pulseMode"]').forEach((r) => {
+          r.addEventListener("change", () => {
+            const val = Number(r.value);
+            if (val === 1 || val === 2) {
+              PULSEFX.mode = val;
+              gl.uniform1i(u_pulseMode, PULSEFX.mode);
             }
+          });
+        });
+        pulseLamR.oninput = () => {
+          PULSEFX.lambdaPx = +pulseLamR.value;
+          vPulseLam.textContent = PULSEFX.lambdaPx + " px";
+          gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
+        };
 
-            // 渲染
-            let t0 = performance.now();
+        fadeRateR.oninput = () => {
+          FADE.forceRate = +fadeRateR.value;
+          vFadeRate.textContent = FADE.forceRate.toFixed(1) + "/s";
+        };
+        speedMinR.oninput = () => {
+          DROP.speedMin = +speedMinR.value;
+          vSpeedMin.textContent = DROP.speedMin + " px/s";
+        };
+        dropFrontR.oninput = () => {
+          DROP.front = +dropFrontR.value;
+          vDropFront.textContent = DROP.front.toFixed(2);
+        };
+        dropSqueezeR.oninput = () => {
+          DROP.squeeze = +dropSqueezeR.value;
+          vDropSqueeze.textContent = DROP.squeeze.toFixed(2);
+        };
 
-            function frame() {
-                stepSprings();
-                gl.clearColor(0, 0, 0, 1);
-                gl.clear(gl.COLOR_BUFFER_BIT);
-                gl.uniform1f(u_time, (performance.now() - t0) * 0.001);
-                gl.drawArrays(gl.TRIANGLES, 0, 3);
-                requestAnimationFrame(frame);
+        // 鼠标
+        const mouse = {
+          x: 0,
+          y: 0,
+          t: 0,
+        };
+        let instSpeed = 0,
+          smoothSpeed = 0;
+        addEventListener(
+          "pointermove",
+          (e) => {
+            const rect = glCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * DPR;
+            const y = glCanvas.height - (e.clientY - rect.top) * DPR; // 自下向上
+
+            const now = performance.now() * 0.001;
+            const dt = Math.max(1e-3, now - (mouse.t || now));
+            const vx = (x - (mouse.x || x)) / dt,
+              vy = (y - (mouse.y || y)) / dt;
+            instSpeed = Math.hypot(vx, vy);
+            smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
+            vMS.textContent = Math.round(smoothSpeed) + " px/s";
+
+            if (pluckOn) {
+              const wasFast = (window.__prevSpeed || 0) > STOP.high;
+              const nowSlow = instSpeed < STOP.low;
+              if (wasFast && nowSlow) settleBubble(x, y);
+              window.__prevSpeed = instSpeed;
+
+              if (
+                instSpeed > PLUCK.speedThreshold ||
+                now - (mouse.t || 0) > 0.08
+              ) {
+                injectPathImpulse(
+                  mouse.x || x,
+                  mouse.y || y,
+                  x,
+                  y,
+                  instSpeed,
+                  vx,
+                  vy
+                );
+              }
             }
+            mouse.x = x;
+            mouse.y = y;
+            mouse.t = now;
+          },
+          {
+            passive: true,
+          }
+        );
 
-            function boot() {
-                resize();
-                syncStatics();
-                initSliders();
-                frame();
+        addEventListener(
+          "pointerdown",
+          (e) => {
+            const rect = glCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * DPR;
+            const y = glCanvas.height - (e.clientY - rect.top) * DPR;
+            mouse.x = x;
+            mouse.y = y;
+            mouse.t = performance.now() * 0.001;
+            injectAOE(x, y, 800, 1, 0);
+          },
+          {
+            passive: true,
+          }
+        );
+
+        function settleBubble(x, y) {
+          const { stepX, stepY } = gridMetrics();
+          const unit = Math.min(stepX, stepY);
+          const rPx = STOP.radiusCells * unit;
+          const { i: ic, j: jc } = nearestIndex(x, y);
+          const rI = Math.ceil(rPx / stepX) + 1,
+            rJ = Math.ceil(rPx / stepY) + 1;
+          for (let dj = -rJ; dj <= rJ; dj++) {
+            const j = jc + dj;
+            for (let di = -rI; di <= rI; di++) {
+              const i = ic + di;
+              const base = idx2(i, j);
+              if (base < 0) continue;
+              const p = base * 2;
+              const { cx, cy } = centerOf(i, j);
+              const dx = cx - x,
+                dy = cy - y;
+              if (Math.hypot(dx, dy) > rPx) continue;
+              posKFactor[base] = 1.0;
+              sizeKFactor[base] = 1.0;
+              velArray[p] *= STOP.velCut;
+              velArray[p + 1] *= STOP.velCut;
+              if (Math.abs(scaleArray[base] - 1.0) <= FADE.restScaleEps) {
+                scaleArray[base] = 1.0;
+                scaleVelArray[base] = 0.0;
+                scaleLock[base] = 1;
+              }
+              lastTouch[base] = performance.now() * 0.001;
             }
-            boot();
+          }
+        }
 
-            // 备用 2D（无拨动）
-            function startFallback() {
-                const ctx = fbCanvas.getContext('2d');
+        // 渲染
+        let t0 = performance.now();
 
-                function resize2() {
-                    fbCanvas.width = innerWidth;
-                    fbCanvas.height = innerHeight;
-                }
+        function frame() {
+          stepSprings();
+          gl.clearColor(0, 0, 0, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.uniform1f(u_time, (performance.now() - t0) * 0.001);
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+          requestAnimationFrame(frame);
+        }
 
-                function rr4(ctx, x, y, w, h, rTR, rTL, rBL, rBR) {
-                    const rr = v => Math.max(0, Math.min(v, Math.min(w, h) / 2 - 0.5));
-                    rTR = rr(rTR);
-                    rTL = rr(rTL);
-                    rBL = rr(rBL);
-                    rBR = rr(rBR);
-                    ctx.beginPath();
-                    ctx.moveTo(x + rTL, y);
-                    ctx.lineTo(x + w - rTR, y);
-                    ctx.arcTo(x + w, y, x + w, y + rTR, rTR);
-                    ctx.lineTo(x + w, y + h - rBR);
-                    ctx.arcTo(x + w, y + h, x + w - rBR, y + h, rBR);
-                    ctx.lineTo(x + rBL, y + h);
-                    ctx.arcTo(x, y + h, x, y + h - rBL, rBL);
-                    ctx.lineTo(x, y + rTL);
-                    ctx.arcTo(x, y, x + rTL, y, rTL);
-                    ctx.closePath();
-                }
+        function boot() {
+          resize();
+          syncStatics();
+          initSliders();
+          frame();
+        }
+        boot();
 
-                function draw() {
-                    ctx.clearRect(0, 0, fbCanvas.width, fbCanvas.height);
-                    const s = CFG.size,
-                        gap = CFG.extraGap;
-                    const stepX = s * 2 + gap,
-                        stepY = s + gap;
-                    const cx = fbCanvas.width / 2,
-                        cy = fbCanvas.height / 2;
-                    const t = (performance.now() * 0.001) * CFG.pulseSpeedHz * 2 * Math.PI;
-                    const k = CFG.pulseMin + (1 - CFG.pulseMin) * (0.5 + 0.5 * Math.sin(t));
-                    const half = s * 0.5 * k,
-                        r = Math.min(CFG.corner * k, half - 0.5);
-                    ctx.fillStyle = '#fff';
-                    for (let j = -1000; j <= 1000; j++) {
-                        const rowOff = (Math.abs(j) % 2) * 0.5;
-                        const y = cy + j * stepY;
-                        if (y < -s * 2 || y > fbCanvas.height + s * 2) continue;
-                        for (let i = -1000; i <= 1000; i++) {
-                            const x = cx + (i + rowOff) * stepX;
-                            if (x < -s * 2 || x > fbCanvas.width + s * 2) continue;
-                            rr4(ctx, x - half, y - half, half * 2, half * 2, r, 0, r, 0);
-                            ctx.fill();
-                        }
-                    }
-                    requestAnimationFrame(draw);
-                }
-                addEventListener('resize', resize2);
-                resize2();
-                draw();
+        // 备用 2D（无拨动）
+        function startFallback() {
+          const ctx = fbCanvas.getContext("2d");
+
+          function resize2() {
+            fbCanvas.width = innerWidth;
+            fbCanvas.height = innerHeight;
+          }
+
+          function rr4(ctx, x, y, w, h, rTR, rTL, rBL, rBR) {
+            const rr = (v) =>
+              Math.max(0, Math.min(v, Math.min(w, h) / 2 - 0.5));
+            rTR = rr(rTR);
+            rTL = rr(rTL);
+            rBL = rr(rBL);
+            rBR = rr(rBR);
+            ctx.beginPath();
+            ctx.moveTo(x + rTL, y);
+            ctx.lineTo(x + w - rTR, y);
+            ctx.arcTo(x + w, y, x + w, y + rTR, rTR);
+            ctx.lineTo(x + w, y + h - rBR);
+            ctx.arcTo(x + w, y + h, x + w - rBR, y + h, rBR);
+            ctx.lineTo(x + rBL, y + h);
+            ctx.arcTo(x, y + h, x, y + h - rBL, rBL);
+            ctx.lineTo(x, y + rTL);
+            ctx.arcTo(x, y, x + rTL, y, rTL);
+            ctx.closePath();
+          }
+
+          function draw() {
+            ctx.clearRect(0, 0, fbCanvas.width, fbCanvas.height);
+            const s = CFG.size,
+              gap = CFG.extraGap;
+            const stepX = s * 2 + gap,
+              stepY = s + gap;
+            const cx = fbCanvas.width / 2,
+              cy = fbCanvas.height / 2;
+            const t =
+              performance.now() * 0.001 * CFG.pulseSpeedHz * 2 * Math.PI;
+            const k =
+              CFG.pulseMin + (1 - CFG.pulseMin) * (0.5 + 0.5 * Math.sin(t));
+            const half = s * 0.5 * k,
+              r = Math.min(CFG.corner * k, half - 0.5);
+            ctx.fillStyle = "#fff";
+            for (let j = -1000; j <= 1000; j++) {
+              const rowOff = (Math.abs(j) % 2) * 0.5;
+              const y = cy + j * stepY;
+              if (y < -s * 2 || y > fbCanvas.height + s * 2) continue;
+              for (let i = -1000; i <= 1000; i++) {
+                const x = cx + (i + rowOff) * stepX;
+                if (x < -s * 2 || x > fbCanvas.width + s * 2) continue;
+                rr4(ctx, x - half, y - half, half * 2, half * 2, r, 0, r, 0);
+                ctx.fill();
+              }
             }
-        })();
+            requestAnimationFrame(draw);
+          }
+          addEventListener("resize", resize2);
+          resize2();
+          draw();
+        }
+      })();
     </script>
-</body>
-
+  </body>
 </html>
