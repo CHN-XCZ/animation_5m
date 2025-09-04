@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>交错排列 · 呼吸方圆环（无 fwidth）</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #000;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .ui {
+        position: fixed;
+        left: 14px;
+        top: 14px;
+        z-index: 5;
+        color: #cdd6f4;
+        font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
+          "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          sans-serif;
+        background: #0b0f14cc;
+        border: 1px solid #1c2636;
+        border-radius: 12px;
+        padding: 10px 12px;
+        backdrop-filter: blur(6px);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        max-width: min(96vw, 720px);
+      }
+      .ui label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 8px;
+        white-space: nowrap;
+      }
+      .ui input[type="range"] {
+        width: 140px;
+      }
+      .ui .mono {
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <div class="ui">
+      <label
+        >格子边长
+        <input id="cell" type="range" min="12" max="120" step="1" value="40" />
+        <span class="mono" id="cellv">40</span>px
+      </label>
+      <label
+        >最小（0~1）
+        <input
+          id="minS"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.90"
+        />
+        <span class="mono" id="minSv">0.90</span>
+      </label>
+      <label
+        >最大（0~1）
+        <input
+          id="maxS"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="1.00"
+        />
+        <span class="mono" id="maxSv">1.00</span>
+      </label>
+      <label
+        >呼吸时长
+        <input
+          id="period"
+          type="range"
+          min="1.5"
+          max="10"
+          step="0.1"
+          value="4.0"
+        />
+        <span class="mono" id="periodv">4.0</span>s
+      </label>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("c");
+      const gl = canvas.getContext("webgl", {
+        antialias: false,
+        depth: false,
+        stencil: false,
+        premultipliedAlpha: false,
+      });
+      if (!gl) {
+        alert("WebGL 不可用");
+        throw new Error("no webgl");
+      }
+
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(innerWidth * dpr);
+        canvas.height = Math.floor(innerHeight * dpr);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+      addEventListener("resize", resize, { passive: true });
+      resize();
+
+      const vertSrc = `
+attribute vec2 aPos;
+void main(){ gl_Position = vec4(aPos,0.0,1.0); }`;
+
+      // 片元：两套交错晶格（间距=2*cell，偏移分别为0.5cell与1.5cell）
+      const fragSrc = `
+precision highp float;
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uCell;
+uniform float uMinS;
+uniform float uMaxS;
+uniform float uPeriod;
+uniform float uAA;   // 固定像素AA宽度
+
+float smin(float a, float b, float k){
+  float h = clamp(0.5 + 0.5*(b - a)/k, 0.0, 1.0);
+  return mix(b, a, h) - k*h*(1.0 - h);
+}
+
+float sdSuperEllipse(vec2 p, float r, float n){
+  p = abs(p) / r;
+  float k = pow(pow(p.x, n) + pow(p.y, n), 1.0 / n);
+  return (k - 1.0) * r;
+}
+
+float sdRing(vec2 p, float rOuter, float thickness, float n){
+  float dOuter = sdSuperEllipse(p, rOuter, n);
+  float dInner = sdSuperEllipse(p, max(0.0, rOuter - thickness), n);
+  return max(dOuter, -dInner);
+}
+
+// 就近取“晶格中心”
+vec2 nearestCenter(vec2 pos, float pitch, vec2 offset){
+  vec2 idx = floor((pos - offset) / pitch + 0.5);   // round
+  return offset + pitch * idx;
+}
+
+void main(){
+  vec2 frag = gl_FragCoord.xy;
+
+  float cell   = uCell;          // 细格边长
+  float pitch  = cell * 2.0;     // 交错后行列间距
+  float t      = uTime / uPeriod;
+  float s      = mix(uMinS, uMaxS, 0.5 + 0.5 * sin(6.2831853 * t));
+
+  // 形状参数（满格=贴格）
+  float outerMax = cell * 0.50;
+  float outerR   = outerMax * s;
+  float ringThk  = max(1.5, cell * 0.22);
+  float nPow     = 4.0;          // 方圆指数（越大越方）
+
+  // 两个交错晶格：行列都错半格 → 与截图一致
+  vec2 c0 = nearestCenter(frag, pitch, vec2(0.5*cell, 0.5*cell)); // 偶偶
+  vec2 c1 = nearestCenter(frag, pitch, vec2(1.5*cell, 1.5*cell)); // 奇奇
+
+  float d0 = sdRing(frag - c0, outerR, ringThk, nPow);
+  float d1 = sdRing(frag - c1, outerR, ringThk, nPow);
+
+  // 接近100%才“粘连”（只在对角处会靠近）
+  float k  = smoothstep(0.985, 1.0, s) * (cell * 0.35);
+  float d  = smin(d0, d1, k);
+
+  float alpha = 1.0 - smoothstep(0.0, uAA, d);
+  gl_FragColor = vec4(vec3(1.0), alpha);
+}
+`;
+
+      function sh(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+          console.error(gl.getShaderInfoLog(s));
+          throw new Error(gl.getShaderInfoLog(s) || "shader compile failed");
+        }
+        return s;
+      }
+      function prog(vs, fs) {
+        const p = gl.createProgram();
+        gl.attachShader(p, vs);
+        gl.attachShader(p, fs);
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          console.error(gl.getProgramInfoLog(p));
+          throw new Error(gl.getProgramInfoLog(p) || "link failed");
+        }
+        return p;
+      }
+
+      const vs = sh(gl.VERTEX_SHADER, vertSrc);
+      const fs = sh(gl.FRAGMENT_SHADER, fragSrc);
+      const pr = prog(vs, fs);
+      gl.useProgram(pr);
+
+      // 全屏三角形
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 3, -1, -1, 3]),
+        gl.STATIC_DRAW
+      );
+      const loc = gl.getAttribLocation(pr, "aPos");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      // uniforms
+      const uRes = gl.getUniformLocation(pr, "uRes");
+      const uTime = gl.getUniformLocation(pr, "uTime");
+      const uCell = gl.getUniformLocation(pr, "uCell");
+      const uMinS = gl.getUniformLocation(pr, "uMinS");
+      const uMaxS = gl.getUniformLocation(pr, "uMaxS");
+      const uPeriod = gl.getUniformLocation(pr, "uPeriod");
+      const uAA = gl.getUniformLocation(pr, "uAA");
+
+      function setUniforms() {
+        gl.uniform2f(uRes, canvas.width, canvas.height);
+        gl.uniform1f(uCell, +cell.value);
+        gl.uniform1f(uMinS, +minS.value);
+        gl.uniform1f(uMaxS, +maxS.value);
+        gl.uniform1f(uPeriod, +period.value);
+        gl.uniform1f(uAA, 1.25); // 固定 AA 像素宽度
+      }
+
+      let start = performance.now();
+      function tick(t) {
+        gl.uniform1f(uTime, (t - start) / 1000);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(tick);
+      }
+
+      const $ = (id) => document.getElementById(id);
+      const cell = $("cell"),
+        cellv = $("cellv");
+      const minS = $("minS"),
+        minSv = $("minSv");
+      const maxS = $("maxS"),
+        maxSv = $("maxSv");
+      const period = $("period"),
+        periodv = $("periodv");
+
+      function sync() {
+        cellv.textContent = (+cell.value).toFixed(0);
+        minSv.textContent = (+minS.value).toFixed(2);
+        maxSv.textContent = (+maxS.value).toFixed(2);
+        periodv.textContent = (+period.value).toFixed(1);
+        setUniforms();
+      }
+      [cell, minS, maxS, period].forEach((e) =>
+        e.addEventListener("input", sync)
+      );
+      addEventListener(
+        "resize",
+        () => {
+          resize();
+          setUniforms();
+        },
+        { passive: true }
+      );
+      sync();
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>
