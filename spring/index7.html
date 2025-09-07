@@ -1,294 +1,267 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>满屏粘连方块 · 脉动样式单选 + 行波/向心（拨动强度滑杆版）</title>
-    <style>
-      html,
-      body {
-        height: 100%;
-        margin: 0;
-        background: #0b0f14;
-      }
 
-      canvas {
-        position: fixed;
-        inset: 0;
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>满屏粘连方块 · 脉动样式单选 + 行波/向心（拨动强度滑杆版）</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #0b0f14;
+    }
 
-      .ui {
-        position: fixed;
-        left: 16px;
-        top: 16px;
-        display: flex;
-        gap: 8px;
-        z-index: 10;
-        flex-wrap: wrap;
-        align-items: center;
-        max-width: 96vw;
-      }
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
 
-      .btn {
-        cursor: pointer;
-        border: 1px solid #2a3340;
-        background: #101825;
-        color: #e6eefc;
-        padding: 8px 12px;
-        border-radius: 10px;
-        font: 600 12px/1 ui-sans-serif, system-ui;
-      }
+    .ui {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+      flex-wrap: wrap;
+      align-items: center;
+      max-width: 96vw;
+    }
 
-      .btn[aria-pressed="true"] {
-        background: #1b2a40;
-        border-color: #314257;
-      }
+    .btn {
+      cursor: pointer;
+      border: 1px solid #2a3340;
+      background: #101825;
+      color: #e6eefc;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font: 600 12px/1 ui-sans-serif, system-ui;
+    }
 
-      .panel {
-        display: flex;
-        gap: 12px;
-        align-items: center;
-        background: #0f141b;
-        border: 1px solid #2a3340;
-        padding: 8px 12px;
-        border-radius: 12px;
-      }
+    .btn[aria-pressed="true"] {
+      background: #1b2a40;
+      border-color: #314257;
+    }
 
-      .panel label {
-        font: 12px/1 ui-sans-serif, system-ui;
-        color: #cdd6f4;
-        opacity: 0.95;
-      }
+    .panel {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: #0f141b;
+      border: 1px solid #2a3340;
+      padding: 8px 12px;
+      border-radius: 12px;
+    }
 
-      .panel input[type="range"] {
-        width: 160px;
-      }
+    .panel label {
+      font: 12px/1 ui-sans-serif, system-ui;
+      color: #cdd6f4;
+      opacity: 0.95;
+    }
 
-      .val {
-        min-width: 62px;
-        display: inline-block;
-        text-align: right;
-        color: #e6eefc;
-        font-weight: 600;
-      }
+    .panel input[type="range"] {
+      width: 160px;
+    }
 
-      .err {
-        position: fixed;
-        left: 16px;
-        bottom: 16px;
-        color: #ffebee;
-        background: #3b1d22;
-        border: 1px solid #6b2a36;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font: 12px/1.4 ui-sans-serif, system-ui;
-        max-width: 70ch;
-        white-space: pre-wrap;
-        z-index: 10;
-        display: none;
-      }
-    </style>
-  </head>
+    .val {
+      min-width: 62px;
+      display: inline-block;
+      text-align: right;
+      color: #e6eefc;
+      font-weight: 600;
+    }
 
-  <body>
-    <canvas id="gl"></canvas>
-    <canvas id="fallback" style="z-index: -1"></canvas>
+    .err {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      color: #ffebee;
+      background: #3b1d22;
+      border: 1px solid #6b2a36;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: 12px/1.4 ui-sans-serif, system-ui;
+      max-width: 70ch;
+      white-space: pre-wrap;
+      z-index: 10;
+      display: none;
+    }
+  </style>
+</head>
 
-    <div class="ui">
-      <button id="pulse" class="btn" aria-pressed="true">脉动：开 (P)</button>
-      <button id="pluck" class="btn" aria-pressed="true">拨动：开 (O)</button>
+<body>
+  <canvas id="gl"></canvas>
+  <canvas id="fallback" style="z-index: -1"></canvas>
 
-      <div class="panel">
-        <label
-          >尺寸 <span id="vSize" class="val"></span
-          ><input id="sizeRange" type="range" min="8" max="160" step="1"
-        /></label>
-        <label
-          >间隔 <span id="vGap" class="val"></span
-          ><input id="gapRange" type="range" min="0" max="120" step="1"
-        /></label>
-        <label
-          >圆角 <span id="vRadius" class="val"></span
-          ><input id="radiusRange" type="range" min="0" max="80" step="1"
-        /></label>
-        <label
-          >脉动速度 <span id="vSpeed" class="val"></span
-          ><input id="speedRange" type="range" min="0" max="3" step="0.01"
-        /></label>
-        <label
-          >连接范围 <span id="vCR" class="val"></span
-          ><input id="crRange" type="range" min="0" max="12" step="0.1"
-        /></label>
-        <label
-          >阈值 <span id="vTh" class="val"></span
-          ><input id="thRange" type="range" min="0.1" max="4" step="0.01"
-        /></label>
-      </div>
+  <div class="ui">
+    <button id="pulse" class="btn" aria-pressed="true">脉动：开 (P)</button>
+    <button id="pluck" class="btn" aria-pressed="true">拨动：开 (O)</button>
 
-      <div class="panel">
-        <label
-          >拨动强度基准(amp) <span id="vAmp" class="val"></span>
-          <input id="ampRange" type="range" min="5" max="200" step="1" />
-        </label>
-        <label
-          >速度→强度比例 <span id="vRatio" class="val"></span
-          ><input id="ratioRange" type="range" min="0" max="0.1" step="0.001"
-        /></label>
-        <label id="delayWrap" style="display: none"
-          >释放延时(ms) <span id="vDelay" class="val"></span
-          ><input id="delayRange" type="range" min="0" max="500" step="10"
-        /></label>
-      </div>
+    <div class="panel">
+      <label>尺寸 <span id="vSize" class="val"></span><input id="sizeRange" type="range" min="8" max="160"
+          step="1" /></label>
+      <label>间隔 <span id="vGap" class="val"></span><input id="gapRange" type="range" min="0" max="120"
+          step="1" /></label>
+      <label>圆角 <span id="vRadius" class="val"></span><input id="radiusRange" type="range" min="0" max="80"
+          step="1" /></label>
+      <label>脉动速度 <span id="vSpeed" class="val"></span><input id="speedRange" type="range" min="0" max="3"
+          step="0.01" /></label>
+      <label>连接范围 <span id="vCR" class="val"></span><input id="crRange" type="range" min="0" max="12"
+          step="0.1" /></label>
+      <label>阈值 <span id="vTh" class="val"></span><input id="thRange" type="range" min="0.1" max="4"
+          step="0.01" /></label>
+    </div>
 
-      <div class="panel">
-        <label
-          >空间衰减σ <span id="vSig" class="val"></span
-          ><input id="sigRange" type="range" min="10" max="400" step="1"
-        /></label>
-        <label
-          >波长λ <span id="vLam" class="val"></span
-          ><input id="lamRange" type="range" min="20" max="800" step="1"
-        /></label>
-        <label
-          >频率Hz <span id="vFq" class="val"></span
-          ><input id="fqRange" type="range" min="0" max="5" step="0.01"
-        /></label>
-        <label
-          >时间阻尼γ <span id="vGam" class="val"></span
-          ><input id="gamRange" type="range" min="0" max="4" step="0.01"
-        /></label>
-      </div>
+    <div class="panel">
+      <label>拨动强度基准(amp) <span id="vAmp" class="val"></span>
+        <input id="ampRange" type="range" min="5" max="200" step="1" />
+      </label>
+      <label>速度→强度比例 <span id="vRatio" class="val"></span><input id="ratioRange" type="range" min="0" max="0.1"
+          step="0.001" /></label>
+      <label id="delayWrap" style="display: none">释放延时(ms) <span id="vDelay" class="val"></span><input id="delayRange"
+          type="range" min="0" max="500" step="10" /></label>
+    </div>
 
-      <div class="panel">
-        <button id="bindAmp" class="btn" aria-pressed="true">
-          amp↔速：正比
-        </button>
-        <button id="bindSig" class="btn" aria-pressed="true">σ↔速：正比</button>
-        <button id="bindLam" class="btn" aria-pressed="true">λ↔速：正比</button>
-        <button id="bindFq" class="btn" aria-pressed="true">f↔速：正比</button>
-        <button id="bindGam" class="btn" aria-pressed="true">γ↔速：正比</button>
-        <label
-          >速度上限(px/s) <span id="vSCap" class="val"></span
-          ><input
-            id="speedCapRange"
-            type="range"
-            min="200"
-            max="4000"
-            step="10"
-        /></label>
-        <label
-          >映射强度 <span id="vSEff" class="val"></span
-          ><input id="speedEffRange" type="range" min="0" max="2" step="0.01"
-        /></label>
-        <label>当前速度 <span id="vMS" class="val"></span></label>
-      </div>
+    <div class="panel">
+      <label>空间衰减σ <span id="vSig" class="val"></span><input id="sigRange" type="range" min="10" max="400"
+          step="1" /></label>
+      <label>波长λ <span id="vLam" class="val"></span><input id="lamRange" type="range" min="20" max="800"
+          step="1" /></label>
+      <label>频率Hz <span id="vFq" class="val"></span><input id="fqRange" type="range" min="0" max="5"
+          step="0.01" /></label>
+      <label>时间阻尼γ <span id="vGam" class="val"></span><input id="gamRange" type="range" min="0" max="4"
+          step="0.01" /></label>
+    </div>
 
-      <!-- 脉动样式 + 脉动波长 -->
-      <div class="panel">
-        <fieldset
-          style="
+    <div class="panel">
+      <button id="bindAmp" class="btn" aria-pressed="true">
+        amp↔速：正比
+      </button>
+      <button id="bindSig" class="btn" aria-pressed="true">σ↔速：正比</button>
+      <button id="bindLam" class="btn" aria-pressed="true">λ↔速：正比</button>
+      <button id="bindFq" class="btn" aria-pressed="true">f↔速：正比</button>
+      <button id="bindGam" class="btn" aria-pressed="true">γ↔速：正比</button>
+      <label>速度上限(px/s) <span id="vSCap" class="val"></span><input id="speedCapRange" type="range" min="200" max="4000"
+          step="10" /></label>
+      <label>映射强度 <span id="vSEff" class="val"></span><input id="speedEffRange" type="range" min="0" max="2"
+          step="0.01" /></label>
+      <label>当前速度 <span id="vMS" class="val"></span></label>
+    </div>
+
+    <!-- 脉动样式 + 脉动波长 -->
+    <div class="panel">
+      <fieldset style="
             display: flex;
             gap: 12px;
             align-items: center;
             border: none;
             padding: 0;
             margin: 0;
-          "
-        >
-          <legend
-            style="
+          ">
+        <legend style="
               color: #cdd6f4;
               font: 600 12px/1 ui-sans-serif, system-ui;
               opacity: 0.95;
-            "
-          >
-            脉动样式
-          </legend>
-          <label
-            ><input type="radio" name="pulseMode" value="1" checked /> 左下→右上
-            行波</label
-          >
-          <label
-            ><input type="radio" name="pulseMode" value="2" />
-            对角向中心往复</label
-          >
-        </fieldset>
-        <label
-          >脉动波长λ(px) <span id="vPulseLam" class="val"></span>
-          <input id="pulseLamRange" type="range" min="40" max="800" step="1" />
-        </label>
-      </div>
+            ">
+          脉动样式
+        </legend>
+        <label><input type="radio" name="pulseMode" value="1" checked /> 左下→右上
+          行波</label>
+        <label><input type="radio" name="pulseMode" value="2" />
+          对角向中心往复</label>
+      </fieldset>
+      <label>脉动波长λ(px) <span id="vPulseLam" class="val"></span>
+        <input id="pulseLamRange" type="range" min="40" max="800" step="1" />
+      </label>
     </div>
+  </div>
 
-    <div id="err" class="err"></div>
+  <div id="err" class="err"></div>
 
-    <script>
-      (() => {
-        // ====== 配置 ======
-        const CFG = {
-          size: 18,
-          corner: 3,
-          extraGap: 4,
-          pulseSpeedHz: 0.3,
-          pulseMin: 0.0,
-          connectRange: 2.0,
-          threshold: 1.0,
-          aa: 1.0,
-        };
-        const WAVE = { amp: 20, sigma: 30, lambda: 68, freq: 1.2, gamma: 1.0 };
-        const PLUCK = { ratio: 0.001, delayMs: 200, speedThreshold: 60 };
-        const SPEEDBIND = {
-          capPx: 1600,
-          effect: 1.0,
-          ampDir: true,
-          sigDir: true,
-          lamDir: true,
-          fqDir: true,
-          gamDir: true,
-        };
-        const SPRING = {
-          k: 60.0,
-          c: 8.0,
-          mass: 1.0,
-          gainRatio: 0.02,
-          maxImpulse: 500.0,
-          samplesPerStep: 3,
-        };
-        const PULSEFX = { mode: 1, lambdaPx: 800 };
+  <script>
+    (() => {
+      // ====== 配置 ======
+      const CFG = {
+        size: 18,
+        corner: 3,
+        extraGap: 4,
+        pulseSpeedHz: 0.3,
+        pulseMin: 0.0,
+        connectRange: 2.0,
+        threshold: 1.0,
+        aa: 1.0,
+      };
+      const WAVE = {
+        amp: 20,
+        sigma: 30,
+        lambda: 68,
+        freq: 1.2,
+        gamma: 1.0
+      };
+      const PLUCK = {
+        ratio: 0.001,
+        delayMs: 200,
+        speedThreshold: 60
+      };
+      const SPEEDBIND = {
+        capPx: 1600,
+        effect: 1.0,
+        ampDir: true,
+        sigDir: true,
+        lamDir: true,
+        fqDir: true,
+        gamDir: true,
+      };
+      const SPRING = {
+        k: 60.0,
+        c: 8.0,
+        mass: 1.0,
+        gainRatio: 0.02,
+        maxImpulse: 500.0,
+        samplesPerStep: 3,
+      };
+      const PULSEFX = {
+        mode: 1,
+        lambdaPx: 800
+      };
 
-        const DPR = Math.min(2, window.devicePixelRatio || 1);
-        const glCanvas = document.getElementById("gl");
-        const fbCanvas = document.getElementById("fallback");
-        const errBox = document.getElementById("err");
-        const showErr = (m) => {
-          errBox.style.display = "block";
-          errBox.textContent = m;
-          fbCanvas.style.zIndex = "1";
-        };
+      const DPR = Math.min(2, window.devicePixelRatio || 1);
+      const glCanvas = document.getElementById("gl");
+      const fbCanvas = document.getElementById("fallback");
+      const errBox = document.getElementById("err");
+      const showErr = (m) => {
+        errBox.style.display = "block";
+        errBox.textContent = m;
+        fbCanvas.style.zIndex = "1";
+      };
 
-        // ====== WebGL 初始化 ======
-        const gl = glCanvas.getContext("webgl", {
-          antialias: false,
-          alpha: false,
-        });
-        if (!gl) {
-          showErr("未启用 WebGL，已回退 Canvas2D。");
-          startFallback();
-          return;
-        }
-        if (!gl.getExtension("OES_texture_float")) {
-          showErr("需要 WebGL 扩展：OES_texture_float");
-          return;
-        }
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-        gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+      // ====== WebGL 初始化 ======
+      const gl = glCanvas.getContext("webgl", {
+        antialias: false,
+        alpha: false,
+      });
+      if (!gl) {
+        showErr("未启用 WebGL，已回退 Canvas2D。");
+        startFallback();
+        return;
+      }
+      if (!gl.getExtension("OES_texture_float")) {
+        showErr("需要 WebGL 扩展：OES_texture_float");
+        return;
+      }
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
 
-        const VERT = `#ifdef GL_ES\nprecision highp float;\n#endif\nattribute vec2 a_pos;\nvoid main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
+      const VERT =
+        `#ifdef GL_ES\nprecision highp float;\n#endif\nattribute vec2 a_pos;\nvoid main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
 
-        const FRAG = `
+      const FRAG =
+        `
 #ifdef GL_ES
   #ifdef GL_FRAGMENT_PRECISION_HIGH
     precision highp float;
@@ -308,671 +281,717 @@ vec3 fetchDispScale(ivec2 ij){ ivec2 ij0 = ij - u_gridMin; vec2 uv = (vec2(ij0)+
 float pulseBase(vec2 uv){ float phase0=0.5+0.5*sin(6.2831853*u_pulseHz*u_time); float baseDefault=u_pulseMin + (1.0-u_pulseMin)*phase0; vec2 n=normalize(vec2(1.0,1.0)); float k=6.2831853/max(1.0,u_waveLambda); float w=6.2831853*u_pulseHz; if(u_pulseMode==1){ float s=dot(uv,n); float ph=k*s - w*u_time; return u_pulseMin + (1.0-u_pulseMin)*(0.5+0.5*sin(ph)); } else if(u_pulseMode==2){ float s1=dot(uv,n); float s2=dot(u_res-uv,n); float ph1=k*s1 - w*u_time; float ph2=k*s2 - w*u_time; float comb=0.5 + 0.25*(sin(ph1)+sin(ph2)); return u_pulseMin + (1.0-u_pulseMin)*comb; } else { return baseDefault; } }
 void main(){ vec2 uv=gl_FragCoord.xy; vec2 C=u_res*0.5; float pulse = pulseBase(uv); float dmin=1e6, insideF=0.0, phi=0.0; const int MAX_SCAN=20; float jBase=floor((uv.y-C.y)/u_step.y+0.5); for(int jy=-MAX_SCAN;jy<=MAX_SCAN;jy++){ if(abs(float(jy))>u_scanR) continue; float j=jBase+float(jy); float rowOff=mod(abs(j),2.0)*0.5; float iBase=floor((uv.x-C.x-rowOff*u_step.x)/u_step.x+0.5); for(int ix=-MAX_SCAN;ix<=MAX_SCAN;ix++){ if(abs(float(ix))>u_scanR) continue; float i=iBase+float(ix); vec2 center=vec2(C.x+(i+rowOff)*u_step.x, C.y+j*u_step.y); vec3 ds = fetchDispScale(ivec2(int(i), int(j))); center += ds.rg; vec2 hSize=u_half0*pulse; vec4 r4=u_radius4*pulse; float d=sdRoundBoxCorners(uv-center,hSize,r4); dmin=min(dmin,d); if(d<=0.0) insideF=1.0; phi += exp(-u_falloff*max(d,0.0)); }} float mask=(insideF>0.5)?1.0:step(u_thresh,phi); float edge=clamp(1.0 - smoothstep(0.0, u_aa, dmin), 0.0, 1.0); mask=max(mask, edge*0.95); gl_FragColor=vec4(vec3(mask),1.0); }`;
 
-        function compile(type, src) {
-          const s = gl.createShader(type);
-          gl.shaderSource(s, src);
-          gl.compileShader(s);
-          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-            const log = gl.getShaderInfoLog(s) || "(empty log)";
-            gl.deleteShader(s);
-            throw new Error(log);
+      function compile(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+          const log = gl.getShaderInfoLog(s) || "(empty log)";
+          gl.deleteShader(s);
+          throw new Error(log);
+        }
+        return s;
+      }
+
+      let prog;
+      try {
+        prog = gl.createProgram();
+        gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+        gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+          throw new Error(gl.getProgramInfoLog(prog));
+      } catch (e) {
+        showErr("WebGL 着色器失败：" + e.message + "。已回退 Canvas2D。");
+        startFallback();
+        return;
+      }
+      gl.useProgram(prog);
+
+      // 全屏三角
+      {
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(
+          gl.ARRAY_BUFFER,
+          new Float32Array([-1, -1, 3, -1, -1, 3]),
+          gl.STATIC_DRAW
+        );
+        const a_pos = gl.getAttribLocation(prog, "a_pos");
+        gl.enableVertexAttribArray(a_pos);
+        gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+      }
+
+      // uniforms
+      const U = (n) => gl.getUniformLocation(prog, n);
+      const u_res = U("u_res"),
+        u_time = U("u_time");
+      const u_half0 = U("u_half0"),
+        u_radius4 = U("u_radius4"),
+        u_step = U("u_step");
+      const u_pulseMin = U("u_pulseMin"),
+        u_pulseHz = U("u_pulseHz");
+      const u_thresh = U("u_thresh"),
+        u_falloff = U("u_falloff"),
+        u_aa = U("u_aa");
+      const u_dispTex = U("u_dispTex"),
+        u_texSize = U("u_texSize"),
+        u_gridMin = U("u_gridMin");
+      const u_scanR = U("u_scanR");
+      const u_pulseMode = U("u_pulseMode");
+      const u_waveLambda = U("u_waveLambda");
+
+      function syncStatics() {
+        gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
+        const r = CFG.corner * DPR;
+        gl.uniform4f(u_radius4, r, 0.0, r, 0.0);
+        gl.uniform1f(u_pulseMin, CFG.pulseMin);
+        gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+        gl.uniform1f(u_thresh, CFG.threshold);
+        gl.uniform1f(u_aa, CFG.aa * DPR);
+        gl.uniform1i(u_pulseMode, PULSEFX.mode);
+        gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
+        const k = Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR);
+        gl.uniform1f(u_falloff, k);
+        syncStep();
+      }
+
+      function gridMetrics() {
+        const s = CFG.size * DPR;
+        return {
+          stepX: s * 2.0 + CFG.extraGap * 2 * DPR,
+          stepY: s + CFG.extraGap * DPR,
+        };
+      }
+
+      function syncStep() {
+        const s = CFG.size * DPR;
+        const stepX = s * 2.0 + CFG.extraGap * 2 * DPR;
+        const stepY = s + CFG.extraGap * DPR;
+        gl.uniform2f(u_step, stepX, stepY);
+        initSpringField();
+        syncSpringUniforms();
+      }
+
+      function resize() {
+        const w = Math.floor(innerWidth * DPR),
+          h = Math.floor(innerHeight * DPR);
+        glCanvas.width = w;
+        glCanvas.height = h;
+        glCanvas.style.width = innerWidth + "px";
+        glCanvas.style.height = innerHeight + "px";
+        gl.viewport(0, 0, w, h);
+        gl.uniform2f(u_res, w, h);
+        initSpringField();
+        syncSpringUniforms();
+      }
+      addEventListener("resize", resize);
+
+      // ====== 弹簧场 ======
+      let cols = 0,
+        rows = 0,
+        iMin = 0,
+        jMin = 0;
+      let dispArray = null,
+        velArray = null,
+        dispTex = null;
+      let scanR = 3.0;
+
+      function initSpringField() {
+        const w = glCanvas.width,
+          h = glCanvas.height;
+        const {
+          stepX,
+          stepY
+        } = gridMetrics();
+        const iSpan = Math.ceil(w / stepX + 6),
+          jSpan = Math.ceil(h / stepY + 6);
+        iMin = -iSpan;
+        jMin = -jSpan;
+        const iMax = iSpan,
+          jMax = jSpan;
+        cols = iMax - iMin + 1;
+        rows = jMax - jMin + 1;
+        dispArray = new Float32Array(cols * rows * 2);
+        velArray = new Float32Array(cols * rows * 2);
+        if (!dispTex) dispTex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, dispTex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          cols,
+          rows,
+          0,
+          gl.RGBA,
+          gl.FLOAT,
+          new Float32Array(cols * rows * 4)
+        );
+      }
+
+      function syncSpringUniforms() {
+        gl.uniform2f(u_texSize, cols, rows);
+        gl.uniform2i(u_gridMin, iMin, jMin);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, dispTex);
+        gl.uniform1i(u_dispTex, 0);
+      }
+      const idx = (i, j) => {
+        const ii = i - iMin,
+          jj = j - jMin;
+        if (ii < 0 || ii >= cols || jj < 0 || jj >= rows) return -1;
+        return (jj * cols + ii) * 2;
+      };
+
+      function nearestIndex(x, y) {
+        const w = glCanvas.width,
+          h = glCanvas.height,
+          Cx = w * 0.5,
+          Cy = h * 0.5;
+        const {
+          stepX,
+          stepY
+        } = gridMetrics();
+        const j = Math.floor((y - Cy) / stepY + 0.5);
+        const ro = (Math.abs(j) % 2) * 0.5;
+        const i = Math.floor((x - Cx - ro * stepX) / stepX + 0.5);
+        return {
+          i,
+          j
+        };
+      }
+
+      // 每帧积分 + 上传纹理 + 动态扫描半径估计
+      let lastTick = performance.now() * 0.001;
+      let gammaEffGlobal = 0.0;
+
+      function stepSprings() {
+        const now = performance.now() * 0.001;
+        let dt = now - lastTick;
+        lastTick = now;
+        dt = Math.min(Math.max(dt, 1 / 120), 1 / 30);
+        const k = SPRING.k,
+          c = SPRING.c,
+          invM = 1.0 / SPRING.mass;
+        const eg = Math.exp(-gammaEffGlobal * dt);
+        for (let j = 0; j < rows; j++) {
+          for (let i = 0; i < cols; i++) {
+            const p = (j * cols + i) * 2;
+            let x = dispArray[p],
+              y = dispArray[p + 1];
+            let vx = velArray[p],
+              vy = velArray[p + 1];
+            const ax = (-k * x - c * vx) * invM,
+              ay = (-k * y - c * vy) * invM;
+            vx = (vx + ax * dt) * eg;
+            vy = (vy + ay * dt) * eg;
+            x += vx * dt;
+            y += vy * dt;
+            dispArray[p] = x;
+            dispArray[p + 1] = y;
+            velArray[p] = vx;
+            velArray[p + 1] = vy;
           }
-          return s;
         }
-
-        let prog;
-        try {
-          prog = gl.createProgram();
-          gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-          gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-          gl.linkProgram(prog);
-          if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
-            throw new Error(gl.getProgramInfoLog(prog));
-        } catch (e) {
-          showErr("WebGL 着色器失败：" + e.message + "。已回退 Canvas2D。");
-          startFallback();
-          return;
+        let maxD = 0.0;
+        const tex = new Float32Array(cols * rows * 4);
+        for (let q = 0; q < cols * rows; q++) {
+          const p2 = q * 2,
+            p4 = q * 4;
+          const dx = dispArray[p2],
+            dy = dispArray[p2 + 1];
+          tex[p4] = dx;
+          tex[p4 + 1] = dy;
+          tex[p4 + 2] = 0;
+          tex[p4 + 3] = 1;
+          const r = Math.hypot(dx, dy);
+          if (r > maxD) maxD = r;
         }
-        gl.useProgram(prog);
+        gl.bindTexture(gl.TEXTURE_2D, dispTex);
+        gl.texSubImage2D(
+          gl.TEXTURE_2D,
+          0,
+          0,
+          0,
+          cols,
+          rows,
+          gl.RGBA,
+          gl.FLOAT,
+          tex
+        );
+        const {
+          stepX,
+          stepY
+        } = gridMetrics();
+        const stepMin = Math.min(stepX, stepY);
+        scanR = Math.min(20.0, Math.ceil(maxD / stepMin) + 1.0);
+      }
 
-        // 全屏三角
-        {
-          const buf = gl.createBuffer();
-          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-          gl.bufferData(
-            gl.ARRAY_BUFFER,
-            new Float32Array([-1, -1, 3, -1, -1, 3]),
-            gl.STATIC_DRAW
-          );
-          const a_pos = gl.getAttribLocation(prog, "a_pos");
-          gl.enableVertexAttribArray(a_pos);
-          gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
-        }
-
-        // uniforms
-        const U = (n) => gl.getUniformLocation(prog, n);
-        const u_res = U("u_res"),
-          u_time = U("u_time");
-        const u_half0 = U("u_half0"),
-          u_radius4 = U("u_radius4"),
-          u_step = U("u_step");
-        const u_pulseMin = U("u_pulseMin"),
-          u_pulseHz = U("u_pulseHz");
-        const u_thresh = U("u_thresh"),
-          u_falloff = U("u_falloff"),
-          u_aa = U("u_aa");
-        const u_dispTex = U("u_dispTex"),
-          u_texSize = U("u_texSize"),
-          u_gridMin = U("u_gridMin");
-        const u_scanR = U("u_scanR");
-        const u_pulseMode = U("u_pulseMode");
-        const u_waveLambda = U("u_waveLambda");
-
-        function syncStatics() {
-          gl.uniform2f(u_half0, (CFG.size * DPR) / 2, (CFG.size * DPR) / 2);
-          const r = CFG.corner * DPR;
-          gl.uniform4f(u_radius4, r, 0.0, r, 0.0);
+      // ====== 交互 ======
+      let pluckOn = true,
+        pulseOn = true;
+      const btnPulse = document.getElementById("pulse");
+      const btnPluck = document.getElementById("pluck");
+      btnPulse.onclick = () => {
+        pulseOn = !pulseOn;
+        btnPulse.setAttribute("aria-pressed", pulseOn);
+        btnPulse.textContent = `脉动：${pulseOn ? "开" : "关"} (P)`;
+        if (pulseOn) {
+          gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
           gl.uniform1f(u_pulseMin, CFG.pulseMin);
-          gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
-          gl.uniform1f(u_thresh, CFG.threshold);
-          gl.uniform1f(u_aa, CFG.aa * DPR);
-          gl.uniform1i(u_pulseMode, PULSEFX.mode);
-          gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
-          const k = Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR);
-          gl.uniform1f(u_falloff, k);
-          syncStep();
+        } else {
+          gl.uniform1f(u_pulseHz, 0.0);
+          gl.uniform1f(u_pulseMin, 1.0);
         }
-        function gridMetrics() {
-          const s = CFG.size * DPR;
-          return {
-            stepX: s * 2.0 + CFG.extraGap * 2 * DPR,
-            stepY: s + CFG.extraGap * DPR,
-          };
-        }
-        function syncStep() {
-          const s = CFG.size * DPR;
-          const stepX = s * 2.0 + CFG.extraGap * 2 * DPR;
-          const stepY = s + CFG.extraGap * DPR;
-          gl.uniform2f(u_step, stepX, stepY);
-          initSpringField();
-          syncSpringUniforms();
-        }
-        function resize() {
-          const w = Math.floor(innerWidth * DPR),
-            h = Math.floor(innerHeight * DPR);
-          glCanvas.width = w;
-          glCanvas.height = h;
-          glCanvas.style.width = innerWidth + "px";
-          glCanvas.style.height = innerHeight + "px";
-          gl.viewport(0, 0, w, h);
-          gl.uniform2f(u_res, w, h);
-          initSpringField();
-          syncSpringUniforms();
-        }
-        addEventListener("resize", resize);
+      };
+      btnPluck.onclick = () => {
+        pluckOn = !pluckOn;
+        btnPluck.setAttribute("aria-pressed", pluckOn);
+        btnPluck.textContent = `拨动：${pluckOn ? "开" : "关"} (O)`;
+      };
+      addEventListener("keydown", (e) => {
+        if (e.key === "p" || e.key === "P") btnPulse.click();
+        if (e.key === "o" || e.key === "O") btnPluck.click();
+      });
 
-        // ====== 弹簧场 ======
-        let cols = 0,
-          rows = 0,
-          iMin = 0,
-          jMin = 0;
-        let dispArray = null,
-          velArray = null,
-          dispTex = null;
-        let scanR = 3.0;
-        function initSpringField() {
-          const w = glCanvas.width,
-            h = glCanvas.height;
-          const { stepX, stepY } = gridMetrics();
-          const iSpan = Math.ceil(w / stepX + 6),
-            jSpan = Math.ceil(h / stepY + 6);
-          iMin = -iSpan;
-          jMin = -jSpan;
-          const iMax = iSpan,
-            jMax = jSpan;
-          cols = iMax - iMin + 1;
-          rows = jMax - jMin + 1;
-          dispArray = new Float32Array(cols * rows * 2);
-          velArray = new Float32Array(cols * rows * 2);
-          if (!dispTex) dispTex = gl.createTexture();
-          gl.bindTexture(gl.TEXTURE_2D, dispTex);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-          gl.texImage2D(
-            gl.TEXTURE_2D,
-            0,
-            gl.RGBA,
-            cols,
-            rows,
-            0,
-            gl.RGBA,
-            gl.FLOAT,
-            new Float32Array(cols * rows * 4)
-          );
-        }
-        function syncSpringUniforms() {
-          gl.uniform2f(u_texSize, cols, rows);
-          gl.uniform2i(u_gridMin, iMin, jMin);
-          gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, dispTex);
-          gl.uniform1i(u_dispTex, 0);
-        }
-        const idx = (i, j) => {
-          const ii = i - iMin,
-            jj = j - jMin;
-          if (ii < 0 || ii >= cols || jj < 0 || jj >= rows) return -1;
-          return (jj * cols + ii) * 2;
-        };
-        function nearestIndex(x, y) {
-          const w = glCanvas.width,
-            h = glCanvas.height,
-            Cx = w * 0.5,
-            Cy = h * 0.5;
-          const { stepX, stepY } = gridMetrics();
-          const j = Math.floor((y - Cy) / stepY + 0.5);
-          const ro = (Math.abs(j) % 2) * 0.5;
-          const i = Math.floor((x - Cx - ro * stepX) / stepX + 0.5);
-          return { i, j };
-        }
+      // ====== UI 绑定 ======
+      const id = (x) => document.getElementById(x);
+      const sizeR = id("sizeRange"),
+        gapR = id("gapRange"),
+        radR = id("radiusRange"),
+        spdR = id("speedRange"),
+        crR = id("crRange"),
+        thR = id("thRange");
+      const sigR = id("sigRange"),
+        lamR = id("lamRange"),
+        fqR = id("fqRange"),
+        gamR = id("gamRange"),
+        ratioR = id("ratioRange"),
+        delayR = id("delayRange"),
+        ampR = id("ampRange");
+      const speedCapR = id("speedCapRange"),
+        speedEffR = id("speedEffRange"),
+        pulseLamR = id("pulseLamRange");
+      const vSize = id("vSize"),
+        vGap = id("vGap"),
+        vRad = id("vRadius"),
+        vSpd = id("vSpeed"),
+        vCR = id("vCR"),
+        vTh = id("vTh");
+      const vSig = id("vSig"),
+        vLam = id("vLam"),
+        vFq = id("vFq"),
+        vGam = id("vGam"),
+        vRatio = id("vRatio"),
+        vDelay = id("vDelay"),
+        vAmp = id("vAmp");
+      const vSCap = id("vSCap"),
+        vSEff = id("vSEff"),
+        vMS = id("vMS"),
+        vPulseLam = id("vPulseLam");
 
-        // 每帧积分 + 上传纹理 + 动态扫描半径估计
-        let lastTick = performance.now() * 0.001;
-        let gammaEffGlobal = 0.0;
-        function stepSprings() {
-          const now = performance.now() * 0.001;
-          let dt = now - lastTick;
-          lastTick = now;
-          dt = Math.min(Math.max(dt, 1 / 120), 1 / 30);
-          const k = SPRING.k,
-            c = SPRING.c,
-            invM = 1.0 / SPRING.mass;
-          const eg = Math.exp(-gammaEffGlobal * dt);
-          for (let j = 0; j < rows; j++) {
-            for (let i = 0; i < cols; i++) {
-              const p = (j * cols + i) * 2;
-              let x = dispArray[p],
-                y = dispArray[p + 1];
-              let vx = velArray[p],
-                vy = velArray[p + 1];
-              const ax = (-k * x - c * vx) * invM,
-                ay = (-k * y - c * vy) * invM;
-              vx = (vx + ax * dt) * eg;
-              vy = (vy + ay * dt) * eg;
-              x += vx * dt;
-              y += vy * dt;
-              dispArray[p] = x;
-              dispArray[p + 1] = y;
-              velArray[p] = vx;
-              velArray[p + 1] = vy;
-            }
-          }
-          let maxD = 0.0;
-          const tex = new Float32Array(cols * rows * 4);
-          for (let q = 0; q < cols * rows; q++) {
-            const p2 = q * 2,
-              p4 = q * 4;
-            const dx = dispArray[p2],
-              dy = dispArray[p2 + 1];
-            tex[p4] = dx;
-            tex[p4 + 1] = dy;
-            tex[p4 + 2] = 0;
-            tex[p4 + 3] = 1;
-            const r = Math.hypot(dx, dy);
-            if (r > maxD) maxD = r;
-          }
-          gl.bindTexture(gl.TEXTURE_2D, dispTex);
-          gl.texSubImage2D(
-            gl.TEXTURE_2D,
-            0,
-            0,
-            0,
-            cols,
-            rows,
-            gl.RGBA,
-            gl.FLOAT,
-            tex
-          );
-          const { stepX, stepY } = gridMetrics();
-          const stepMin = Math.min(stepX, stepY);
-          scanR = Math.min(20.0, Math.ceil(maxD / stepMin) + 1.0);
-        }
+      function initSliders() {
+        sizeR.value = CFG.size;
+        vSize.textContent = CFG.size + " px";
+        gapR.value = CFG.extraGap;
+        vGap.textContent = CFG.extraGap + " px";
+        radR.value = CFG.corner;
+        vRad.textContent = CFG.corner + " px";
+        spdR.value = CFG.pulseSpeedHz;
+        vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
+        crR.value = CFG.connectRange;
+        vCR.textContent = CFG.connectRange.toFixed(1) + " px";
+        thR.value = CFG.threshold;
+        vTh.textContent = CFG.threshold.toFixed(2);
 
-        // ====== 交互 ======
-        let pluckOn = true,
-          pulseOn = true;
-        const btnPulse = document.getElementById("pulse");
-        const btnPluck = document.getElementById("pluck");
-        btnPulse.onclick = () => {
-          pulseOn = !pulseOn;
-          btnPulse.setAttribute("aria-pressed", pulseOn);
-          btnPulse.textContent = `脉动：${pulseOn ? "开" : "关"} (P)`;
-          if (pulseOn) {
-            gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
-            gl.uniform1f(u_pulseMin, CFG.pulseMin);
-          } else {
-            gl.uniform1f(u_pulseHz, 0.0);
-            gl.uniform1f(u_pulseMin, 1.0);
+        ampR.value = WAVE.amp;
+        vAmp.textContent = WAVE.amp.toFixed(0);
+        ratioR.value = PLUCK.ratio;
+        vRatio.textContent = PLUCK.ratio.toFixed(3);
+        delayR.value = PLUCK.delayMs;
+        vDelay.textContent = PLUCK.delayMs + " ms";
+
+        sigR.value = WAVE.sigma;
+        vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+        lamR.value = WAVE.lambda;
+        vLam.textContent = WAVE.lambda.toFixed(0) + " px";
+        fqR.value = WAVE.freq;
+        vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+        gamR.value = WAVE.gamma;
+        vGam.textContent = WAVE.gamma.toFixed(2);
+
+        speedCapR.value = SPEEDBIND.capPx;
+        vSCap.textContent = SPEEDBIND.capPx + " px/s";
+        speedEffR.value = SPEEDBIND.effect;
+        vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+
+        pulseLamR.value = PULSEFX.lambdaPx;
+        vPulseLam.textContent = PULSEFX.lambdaPx + " px";
+        document
+          .querySelectorAll('input[name="pulseMode"]')
+          .forEach((r) => (r.checked = Number(r.value) === PULSEFX.mode));
+
+        vMS.textContent = "0 px/s";
+      }
+
+      sizeR.oninput = () => {
+        CFG.size = +sizeR.value;
+        vSize.textContent = CFG.size + " px";
+        syncStatics();
+      };
+      gapR.oninput = () => {
+        CFG.extraGap = +gapR.value;
+        vGap.textContent = CFG.extraGap + " px";
+        syncStep();
+      };
+      radR.oninput = () => {
+        CFG.corner = +radR.value;
+        vRad.textContent = CFG.corner + " px";
+        syncStatics();
+      };
+      spdR.oninput = () => {
+        CFG.pulseSpeedHz = +spdR.value;
+        vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
+        gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
+      };
+      crR.oninput = () => {
+        CFG.connectRange = +crR.value;
+        vCR.textContent = CFG.connectRange.toFixed(1) + " px";
+        gl.uniform1f(
+          u_falloff,
+          Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
+        );
+      };
+      thR.oninput = () => {
+        CFG.threshold = +thR.value;
+        vTh.textContent = CFG.threshold.toFixed(2);
+        gl.uniform1f(u_thresh, CFG.threshold);
+      };
+
+      ampR.oninput = () => {
+        WAVE.amp = +ampR.value;
+        vAmp.textContent = WAVE.amp.toFixed(0);
+      };
+      ratioR.oninput = () => {
+        PLUCK.ratio = +ratioR.value;
+        vRatio.textContent = PLUCK.ratio.toFixed(3);
+      };
+      delayR.oninput = () => {
+        PLUCK.delayMs = +delayR.value;
+        vDelay.textContent = PLUCK.delayMs + " ms";
+      };
+
+      sigR.oninput = () => {
+        WAVE.sigma = +sigR.value;
+        vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+      };
+      lamR.oninput = () => {
+        WAVE.lambda = +lamR.value;
+        vLam.textContent = WAVE.lambda.toFixed(0) + " px";
+      };
+      fqR.oninput = () => {
+        WAVE.freq = +fqR.value;
+        vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+      };
+      gamR.oninput = () => {
+        WAVE.gamma = +gamR.value;
+        vGam.textContent = WAVE.gamma.toFixed(2);
+      };
+
+      speedCapR.oninput = () => {
+        SPEEDBIND.capPx = +speedCapR.value;
+        vSCap.textContent = SPEEDBIND.capPx + " px/s";
+      };
+      speedEffR.oninput = () => {
+        SPEEDBIND.effect = +speedEffR.value;
+        vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+      };
+
+      document.querySelectorAll('input[name="pulseMode"]').forEach((r) => {
+        r.addEventListener("change", () => {
+          const val = Number(r.value);
+          if (val === 1 || val === 2) {
+            gl.uniform1i(u_pulseMode, val);
           }
-        };
-        btnPluck.onclick = () => {
-          pluckOn = !pluckOn;
-          btnPluck.setAttribute("aria-pressed", pluckOn);
-          btnPluck.textContent = `拨动：${pluckOn ? "开" : "关"} (O)`;
-        };
-        addEventListener("keydown", (e) => {
-          if (e.key === "p" || e.key === "P") btnPulse.click();
-          if (e.key === "o" || e.key === "O") btnPluck.click();
         });
+      });
+      pulseLamR.oninput = () => {
+        PULSEFX.lambdaPx = +pulseLamR.value;
+        vPulseLam.textContent = PULSEFX.lambdaPx + " px";
+        gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
+      };
 
-        // ====== UI 绑定 ======
-        const id = (x) => document.getElementById(x);
-        const sizeR = id("sizeRange"),
-          gapR = id("gapRange"),
-          radR = id("radiusRange"),
-          spdR = id("speedRange"),
-          crR = id("crRange"),
-          thR = id("thRange");
-        const sigR = id("sigRange"),
-          lamR = id("lamRange"),
-          fqR = id("fqRange"),
-          gamR = id("gamRange"),
-          ratioR = id("ratioRange"),
-          delayR = id("delayRange"),
-          ampR = id("ampRange");
-        const speedCapR = id("speedCapRange"),
-          speedEffR = id("speedEffRange"),
-          pulseLamR = id("pulseLamRange");
-        const vSize = id("vSize"),
-          vGap = id("vGap"),
-          vRad = id("vRadius"),
-          vSpd = id("vSpeed"),
-          vCR = id("vCR"),
-          vTh = id("vTh");
-        const vSig = id("vSig"),
-          vLam = id("vLam"),
-          vFq = id("vFq"),
-          vGam = id("vGam"),
-          vRatio = id("vRatio"),
-          vDelay = id("vDelay"),
-          vAmp = id("vAmp");
-        const vSCap = id("vSCap"),
-          vSEff = id("vSEff"),
-          vMS = id("vMS"),
-          vPulseLam = id("vPulseLam");
-
-        function initSliders() {
-          sizeR.value = CFG.size;
-          vSize.textContent = CFG.size + " px";
-          gapR.value = CFG.extraGap;
-          vGap.textContent = CFG.extraGap + " px";
-          radR.value = CFG.corner;
-          vRad.textContent = CFG.corner + " px";
-          spdR.value = CFG.pulseSpeedHz;
-          vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
-          crR.value = CFG.connectRange;
-          vCR.textContent = CFG.connectRange.toFixed(1) + " px";
-          thR.value = CFG.threshold;
-          vTh.textContent = CFG.threshold.toFixed(2);
-
-          ampR.value = WAVE.amp;
-          vAmp.textContent = WAVE.amp.toFixed(0);
-          ratioR.value = PLUCK.ratio;
-          vRatio.textContent = PLUCK.ratio.toFixed(3);
-          delayR.value = PLUCK.delayMs;
-          vDelay.textContent = PLUCK.delayMs + " ms";
-
-          sigR.value = WAVE.sigma;
-          vSig.textContent = WAVE.sigma.toFixed(0) + " px";
-          lamR.value = WAVE.lambda;
-          vLam.textContent = WAVE.lambda.toFixed(0) + " px";
-          fqR.value = WAVE.freq;
-          vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
-          gamR.value = WAVE.gamma;
-          vGam.textContent = WAVE.gamma.toFixed(2);
-
-          speedCapR.value = SPEEDBIND.capPx;
-          vSCap.textContent = SPEEDBIND.capPx + " px/s";
-          speedEffR.value = SPEEDBIND.effect;
-          vSEff.textContent = SPEEDBIND.effect.toFixed(2);
-
-          pulseLamR.value = PULSEFX.lambdaPx;
-          vPulseLam.textContent = PULSEFX.lambdaPx + " px";
-          document
-            .querySelectorAll('input[name="pulseMode"]')
-            .forEach((r) => (r.checked = Number(r.value) === PULSEFX.mode));
-
-          vMS.textContent = "0 px/s";
-        }
-
-        sizeR.oninput = () => {
-          CFG.size = +sizeR.value;
-          vSize.textContent = CFG.size + " px";
-          syncStatics();
-        };
-        gapR.oninput = () => {
-          CFG.extraGap = +gapR.value;
-          vGap.textContent = CFG.extraGap + " px";
-          syncStep();
-        };
-        radR.oninput = () => {
-          CFG.corner = +radR.value;
-          vRad.textContent = CFG.corner + " px";
-          syncStatics();
-        };
-        spdR.oninput = () => {
-          CFG.pulseSpeedHz = +spdR.value;
-          vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
-          gl.uniform1f(u_pulseHz, CFG.pulseSpeedHz);
-        };
-        crR.oninput = () => {
-          CFG.connectRange = +crR.value;
-          vCR.textContent = CFG.connectRange.toFixed(1) + " px";
-          gl.uniform1f(
-            u_falloff,
-            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
-          );
-        };
-        thR.oninput = () => {
-          CFG.threshold = +thR.value;
-          vTh.textContent = CFG.threshold.toFixed(2);
-          gl.uniform1f(u_thresh, CFG.threshold);
-        };
-
-        ampR.oninput = () => {
-          WAVE.amp = +ampR.value;
-          vAmp.textContent = WAVE.amp.toFixed(0);
-        };
-        ratioR.oninput = () => {
-          PLUCK.ratio = +ratioR.value;
-          vRatio.textContent = PLUCK.ratio.toFixed(3);
-        };
-        delayR.oninput = () => {
-          PLUCK.delayMs = +delayR.value;
-          vDelay.textContent = PLUCK.delayMs + " ms";
-        };
-
-        sigR.oninput = () => {
-          WAVE.sigma = +sigR.value;
-          vSig.textContent = WAVE.sigma.toFixed(0) + " px";
-        };
-        lamR.oninput = () => {
-          WAVE.lambda = +lamR.value;
-          vLam.textContent = WAVE.lambda.toFixed(0) + " px";
-        };
-        fqR.oninput = () => {
-          WAVE.freq = +fqR.value;
-          vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
-        };
-        gamR.oninput = () => {
-          WAVE.gamma = +gamR.value;
-          vGam.textContent = WAVE.gamma.toFixed(2);
-        };
-
-        speedCapR.oninput = () => {
-          SPEEDBIND.capPx = +speedCapR.value;
-          vSCap.textContent = SPEEDBIND.capPx + " px/s";
-        };
-        speedEffR.oninput = () => {
-          SPEEDBIND.effect = +speedEffR.value;
-          vSEff.textContent = SPEEDBIND.effect.toFixed(2);
-        };
-
-        document.querySelectorAll('input[name="pulseMode"]').forEach((r) => {
-          r.addEventListener("change", () => {
-            const val = Number(r.value);
-            if (val === 1 || val === 2) {
-              gl.uniform1i(u_pulseMode, val);
-            }
-          });
-        });
-        pulseLamR.oninput = () => {
-          PULSEFX.lambdaPx = +pulseLamR.value;
-          vPulseLam.textContent = PULSEFX.lambdaPx + " px";
-          gl.uniform1f(u_waveLambda, PULSEFX.lambdaPx * DPR);
-        };
-
-        function bindBtn(id, flagKey, label) {
-          const el = document.getElementById(id);
-          el.onclick = () => {
-            SPEEDBIND[flagKey] = !SPEEDBIND[flagKey];
-            el.setAttribute("aria-pressed", SPEEDBIND[flagKey]);
-            el.textContent = `${label}：${
+      function bindBtn(id, flagKey, label) {
+        const el = document.getElementById(id);
+        el.onclick = () => {
+          SPEEDBIND[flagKey] = !SPEEDBIND[flagKey];
+          el.setAttribute("aria-pressed", SPEEDBIND[flagKey]);
+          el.textContent = `${label}：${
               SPEEDBIND[flagKey] ? "正比" : "反比"
             }`;
-          };
-          el.textContent = `${label}：${SPEEDBIND[flagKey] ? "正比" : "反比"}`;
-        }
-        bindBtn("bindAmp", "ampDir", "amp↔速");
-        bindBtn("bindSig", "sigDir", "σ↔速");
-        bindBtn("bindLam", "lamDir", "λ↔速");
-        bindBtn("bindFq", "fqDir", "f↔速");
-        bindBtn("bindGam", "gamDir", "γ↔速");
+        };
+        el.textContent = `${label}：${SPEEDBIND[flagKey] ? "正比" : "反比"}`;
+      }
+      bindBtn("bindAmp", "ampDir", "amp↔速");
+      bindBtn("bindSig", "sigDir", "σ↔速");
+      bindBtn("bindLam", "lamDir", "λ↔速");
+      bindBtn("bindFq", "fqDir", "f↔速");
+      bindBtn("bindGam", "gamDir", "γ↔速");
 
-        // 鼠标
-        const mouse = { x: 0, y: 0, t: 0 };
-        let instSpeed = 0,
-          smoothSpeed = 0,
-          distCarry = 0;
-        function sampleSpacingPx() {
-          const { stepX, stepY } = gridMetrics();
-          return Math.max(4, 0.45 * Math.min(stepX, stepY));
-        }
-        function mapBySpeed(dir = true) {
-          const sp =
-            Math.min(smoothSpeed, SPEEDBIND.capPx) /
-            Math.max(1, SPEEDBIND.capPx);
-          const v = dir ? sp : 1 - sp;
-          return 0.5 + v * SPEEDBIND.effect * 0.5;
-        }
+      // 鼠标
+      const mouse = {
+        x: 0,
+        y: 0,
+        t: 0
+      };
+      let instSpeed = 0,
+        smoothSpeed = 0,
+        distCarry = 0;
 
-        function injectAOE(x, y, speed, vx, vy) {
-          const s = speed + 1e-6;
-          const ux = vx / s,
-            uy = vy / s;
-          const ampScale = mapBySpeed(SPEEDBIND.ampDir); // 0.5~(0.5+)
-          const sigmaEff = Math.max(
-            6,
-            WAVE.sigma * mapBySpeed(SPEEDBIND.sigDir)
-          );
-          const lambdaEff = Math.max(
-            20,
-            WAVE.lambda * mapBySpeed(SPEEDBIND.lamDir)
-          );
-          const freqEff = WAVE.freq * mapBySpeed(SPEEDBIND.fqDir);
-          const baseGain = Math.min(
-            SPRING.maxImpulse,
-            speed *
-              (SPRING.gainRatio + PLUCK.ratio) *
-              (ampScale * (WAVE.amp / 20))
-          );
-          const { stepX, stepY } = gridMetrics();
-          const radI = Math.min(
-            7,
-            Math.max(1, Math.ceil((2.5 * sigmaEff) / stepX))
-          );
-          const radJ = Math.min(
-            7,
-            Math.max(1, Math.ceil((2.5 * sigmaEff) / stepY))
-          );
-          const oscPhaseH = 2 * Math.PI * freqEff;
-          const { i: ic, j: jc } = nearestIndex(x, y);
-          for (let jj = -radJ; jj <= radJ; jj++) {
-            for (let ii = -radI; ii <= radI; ii++) {
-              const p = idx(ic + ii, jc + jj);
-              if (p < 0) continue;
-              const rowOff = (Math.abs(jc + jj) % 2) * 0.5;
-              const cx = glCanvas.width * 0.5 + (ic + ii + rowOff) * stepX;
-              const cy = glCanvas.height * 0.5 + (jc + jj) * stepY;
-              const dx = cx - x,
-                dy = cy - y;
-              const r2 = dx * dx + dy * dy;
-              const w = Math.exp(-r2 / (2 * sigmaEff * sigmaEff));
-              const r = Math.sqrt(r2);
-              const osc =
-                0.5 +
-                0.5 *
-                  Math.sin(
-                    oscPhaseH * (performance.now() * 0.001) +
-                      r / Math.max(1, lambdaEff)
-                  );
-              const g = baseGain * w * osc;
-              velArray[p] += ux * g;
-              velArray[p + 1] += uy * g;
-            }
+      function sampleSpacingPx() {
+        const {
+          stepX,
+          stepY
+        } = gridMetrics();
+        return Math.max(4, 0.45 * Math.min(stepX, stepY));
+      }
+
+      function mapBySpeed(dir = true) {
+        const sp =
+          Math.min(smoothSpeed, SPEEDBIND.capPx) /
+          Math.max(1, SPEEDBIND.capPx);
+        const v = dir ? sp : 1 - sp;
+        return 0.5 + v * SPEEDBIND.effect * 0.5;
+      }
+
+      function injectAOE(x, y, speed, vx, vy) {
+        const s = speed + 1e-6;
+        const ux = vx / s,
+          uy = vy / s;
+        const ampScale = mapBySpeed(SPEEDBIND.ampDir); // 0.5~(0.5+)
+        const sigmaEff = Math.max(
+          6,
+          WAVE.sigma * mapBySpeed(SPEEDBIND.sigDir)
+        );
+        const lambdaEff = Math.max(
+          20,
+          WAVE.lambda * mapBySpeed(SPEEDBIND.lamDir)
+        );
+        const freqEff = WAVE.freq * mapBySpeed(SPEEDBIND.fqDir);
+        const baseGain = Math.min(
+          SPRING.maxImpulse,
+          speed *
+          (SPRING.gainRatio + PLUCK.ratio) *
+          (ampScale * (WAVE.amp / 20))
+        );
+        const {
+          stepX,
+          stepY
+        } = gridMetrics();
+        const radI = Math.min(
+          7,
+          Math.max(1, Math.ceil((2.5 * sigmaEff) / stepX))
+        );
+        const radJ = Math.min(
+          7,
+          Math.max(1, Math.ceil((2.5 * sigmaEff) / stepY))
+        );
+        const oscPhaseH = 2 * Math.PI * freqEff;
+        const {
+          i: ic,
+          j: jc
+        } = nearestIndex(x, y);
+        for (let jj = -radJ; jj <= radJ; jj++) {
+          for (let ii = -radI; ii <= radI; ii++) {
+            const p = idx(ic + ii, jc + jj);
+            if (p < 0) continue;
+            const rowOff = (Math.abs(jc + jj) % 2) * 0.5;
+            const cx = glCanvas.width * 0.5 + (ic + ii + rowOff) * stepX;
+            const cy = glCanvas.height * 0.5 + (jc + jj) * stepY;
+            const dx = cx - x,
+              dy = cy - y;
+            const r2 = dx * dx + dy * dy;
+            const w = Math.exp(-r2 / (2 * sigmaEff * sigmaEff));
+            const r = Math.sqrt(r2);
+            const osc =
+              0.5 +
+              0.5 *
+              Math.sin(
+                oscPhaseH * (performance.now() * 0.001) +
+                r / Math.max(1, lambdaEff)
+              );
+            const g = baseGain * w * osc;
+            velArray[p] += ux * g;
+            velArray[p + 1] += uy * g;
           }
         }
-        function injectPathImpulse(x0, y0, x1, y1, speed, vx, vy) {
-          const dist = Math.hypot(x1 - x0, y1 - y0);
-          const { stepX, stepY } = gridMetrics();
-          const unit = 0.65 * Math.min(stepX, stepY);
-          const steps = Math.max(1, Math.ceil(dist / unit));
-          for (let k = 0; k <= steps; k++) {
-            const t = k / steps;
-            const x = x0 + (x1 - x0) * t;
-            const y = y0 + (y1 - y0) * t;
-            injectAOE(x, y, speed, vx, vy);
-          }
-        }
+      }
 
-        addEventListener(
-          "pointermove",
-          (e) => {
-            const rect = glCanvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * DPR;
-            const y = glCanvas.height - (e.clientY - rect.top) * DPR;
-            const now = performance.now() * 0.001;
-            const dt = Math.max(1e-3, now - (mouse.t || now));
-            const vx = (x - (mouse.x || x)) / dt,
-              vy = (y - (mouse.y || y)) / dt;
-            instSpeed = Math.hypot(vx, vy);
-            smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
-            vMS.textContent = Math.round(smoothSpeed) + " px/s";
-            const gMap = mapBySpeed(SPEEDBIND.gamDir);
-            gammaEffGlobal = WAVE.gamma * gMap;
-            if (pluckOn) {
-              const x0 = mouse.x || x,
-                y0 = mouse.y || y;
-              const dx = x - x0,
-                dy = y - y0;
-              const dist = Math.hypot(dx, dy);
-              const sp = sampleSpacingPx();
-              if (dist > 0) {
-                const total = distCarry + dist;
-                const need = Math.floor(total / sp);
-                const inv = 1.0 / dist;
-                for (let m = 1; m <= need; m++) {
-                  const d = m * sp - distCarry;
-                  const t = Math.min(1, d * inv);
-                  const xs = x0 + dx * t;
-                  const ys = y0 + dy * t;
-                  injectPathImpulse(xs, ys, xs + 1, ys, instSpeed, vx, vy);
-                }
-                distCarry = total - need * sp;
-                if (need === 0 && dist > 0.5) {
-                  injectPathImpulse(x0, y0, x, y, instSpeed, vx, vy);
-                }
+      function injectPathImpulse(x0, y0, x1, y1, speed, vx, vy) {
+        const dist = Math.hypot(x1 - x0, y1 - y0);
+        const {
+          stepX,
+          stepY
+        } = gridMetrics();
+        const unit = 0.65 * Math.min(stepX, stepY);
+        const steps = Math.max(1, Math.ceil(dist / unit));
+        for (let k = 0; k <= steps; k++) {
+          const t = k / steps;
+          const x = x0 + (x1 - x0) * t;
+          const y = y0 + (y1 - y0) * t;
+          injectAOE(x, y, speed, vx, vy);
+        }
+      }
+
+      addEventListener(
+        "pointermove",
+        (e) => {
+          const rect = glCanvas.getBoundingClientRect();
+          const x = (e.clientX - rect.left) * DPR;
+          const y = glCanvas.height - (e.clientY - rect.top) * DPR;
+          const now = performance.now() * 0.001;
+          const dt = Math.max(1e-3, now - (mouse.t || now));
+          const vx = (x - (mouse.x || x)) / dt,
+            vy = (y - (mouse.y || y)) / dt;
+          instSpeed = Math.hypot(vx, vy);
+          smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
+          vMS.textContent = Math.round(smoothSpeed) + " px/s";
+          const gMap = mapBySpeed(SPEEDBIND.gamDir);
+          gammaEffGlobal = WAVE.gamma * gMap;
+          if (pluckOn) {
+            const x0 = mouse.x || x,
+              y0 = mouse.y || y;
+            const dx = x - x0,
+              dy = y - y0;
+            const dist = Math.hypot(dx, dy);
+            const sp = sampleSpacingPx();
+            if (dist > 0) {
+              const total = distCarry + dist;
+              const need = Math.floor(total / sp);
+              const inv = 1.0 / dist;
+              for (let m = 1; m <= need; m++) {
+                const d = m * sp - distCarry;
+                const t = Math.min(1, d * inv);
+                const xs = x0 + dx * t;
+                const ys = y0 + dy * t;
+                injectPathImpulse(xs, ys, xs + 1, ys, instSpeed, vx, vy);
+              }
+              distCarry = total - need * sp;
+              if (need === 0 && dist > 0.5) {
+                injectPathImpulse(x0, y0, x, y, instSpeed, vx, vy);
               }
             }
-            mouse.x = x;
-            mouse.y = y;
-            mouse.t = now;
-          },
-          { passive: true }
-        );
-        addEventListener(
-          "pointerdown",
-          (e) => {
-            const rect = glCanvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * DPR;
-            const y = glCanvas.height - (e.clientY - rect.top) * DPR;
-            mouse.x = x;
-            mouse.y = y;
-            mouse.t = performance.now() * 0.001;
-            injectAOE(x, y, 800, 1, 0);
-          },
-          { passive: true }
-        );
-
-        // 渲染
-        let t0 = performance.now();
-        function frame() {
-          stepSprings();
-          gl.clearColor(0, 0, 0, 1);
-          gl.clear(gl.COLOR_BUFFER_BIT);
-          gl.uniform1f(u_time, (performance.now() - t0) * 0.001);
-          gl.uniform1f(u_scanR, scanR);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
-          requestAnimationFrame(frame);
-        }
-        function boot() {
-          resize();
-          syncStatics();
-          initSliders();
-          frame();
-        }
-        boot();
-
-        // 备用 2D
-        function startFallback() {
-          const ctx = fbCanvas.getContext("2d");
-          function resize2() {
-            fbCanvas.width = innerWidth;
-            fbCanvas.height = innerHeight;
           }
-          function rr4(ctx, x, y, w, h, rTR, rTL, rBL, rBR) {
-            const rr = (v) =>
-              Math.max(0, Math.min(v, Math.min(w, h) / 2 - 0.5));
-            rTR = rr(rTR);
-            rTL = rr(rTL);
-            rBL = rr(rBL);
-            rBR = rr(rBR);
-            ctx.beginPath();
-            ctx.moveTo(x + rTL, y);
-            ctx.lineTo(x + w - rTR, y);
-            ctx.arcTo(x + w, y, x + w, y + rTR, rTR);
-            ctx.lineTo(x + w, y + h - rBR);
-            ctx.arcTo(x + w, y + h, x + w - rBR, y + h, rBR);
-            ctx.lineTo(x + rBL, y + h);
-            ctx.arcTo(x, y + h, x, y + h - rBL, rBL);
-            ctx.lineTo(x, y + rTL);
-            ctx.arcTo(x, y, x + rTL, y, rTL);
-            ctx.closePath();
-          }
-          function draw() {
-            ctx.clearRect(0, 0, fbCanvas.width, fbCanvas.height);
-            const s = CFG.size,
-              gap = CFG.extraGap;
-            const stepX = s * 2 + gap,
-              stepY = s + gap;
-            const cx = fbCanvas.width / 2,
-              cy = fbCanvas.height / 2;
-            const t =
-              performance.now() * 0.001 * CFG.pulseSpeedHz * 2 * Math.PI;
-            const k =
-              CFG.pulseMin + (1 - CFG.pulseMin) * (0.5 + 0.5 * Math.sin(t));
-            const half = s * 0.5 * k,
-              r = Math.min(CFG.corner * k, half - 0.5);
-            ctx.fillStyle = "#fff";
-            for (let j = -1000; j <= 1000; j++) {
-              const rowOff = (Math.abs(j) % 2) * 0.5;
-              const y = cy + j * stepY;
-              if (y < -s * 2 || y > fbCanvas.height + s * 2) continue;
-              for (let i = -1000; i <= 1000; i++) {
-                const x = cx + (i + rowOff) * stepX;
-                if (x < -s * 2 || x > fbCanvas.width + s * 2) continue;
-                rr4(ctx, x - half, y - half, half * 2, half * 2, r, 0, r, 0);
-                ctx.fill();
-              }
+          mouse.x = x;
+          mouse.y = y;
+          mouse.t = now;
+        }, {
+          passive: true
+        }
+      );
+      addEventListener(
+        "pointerdown",
+        (e) => {
+          const rect = glCanvas.getBoundingClientRect();
+          const x = (e.clientX - rect.left) * DPR;
+          const y = glCanvas.height - (e.clientY - rect.top) * DPR;
+          mouse.x = x;
+          mouse.y = y;
+          mouse.t = performance.now() * 0.001;
+          injectAOE(x, y, 800, 1, 0);
+        }, {
+          passive: true
+        }
+      );
+
+      // 渲染
+      let t0 = performance.now();
+
+      function frame() {
+        stepSprings();
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.uniform1f(u_time, (performance.now() - t0) * 0.001);
+        gl.uniform1f(u_scanR, scanR);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(frame);
+      }
+
+      function boot() {
+        resize();
+        syncStatics();
+        initSliders();
+        frame();
+      }
+      boot();
+
+      // 备用 2D
+      function startFallback() {
+        const ctx = fbCanvas.getContext("2d");
+
+        function resize2() {
+          fbCanvas.width = innerWidth;
+          fbCanvas.height = innerHeight;
+        }
+
+        function rr4(ctx, x, y, w, h, rTR, rTL, rBL, rBR) {
+          const rr = (v) =>
+            Math.max(0, Math.min(v, Math.min(w, h) / 2 - 0.5));
+          rTR = rr(rTR);
+          rTL = rr(rTL);
+          rBL = rr(rBL);
+          rBR = rr(rBR);
+          ctx.beginPath();
+          ctx.moveTo(x + rTL, y);
+          ctx.lineTo(x + w - rTR, y);
+          ctx.arcTo(x + w, y, x + w, y + rTR, rTR);
+          ctx.lineTo(x + w, y + h - rBR);
+          ctx.arcTo(x + w, y + h, x + w - rBR, y + h, rBR);
+          ctx.lineTo(x + rBL, y + h);
+          ctx.arcTo(x, y + h, x, y + h - rBL, rBL);
+          ctx.lineTo(x, y + rTL);
+          ctx.arcTo(x, y, x + rTL, y, rTL);
+          ctx.closePath();
+        }
+
+        function draw() {
+          ctx.clearRect(0, 0, fbCanvas.width, fbCanvas.height);
+          const s = CFG.size,
+            gap = CFG.extraGap;
+          const stepX = s * 2 + gap,
+            stepY = s + gap;
+          const cx = fbCanvas.width / 2,
+            cy = fbCanvas.height / 2;
+          const t =
+            performance.now() * 0.001 * CFG.pulseSpeedHz * 2 * Math.PI;
+          const k =
+            CFG.pulseMin + (1 - CFG.pulseMin) * (0.5 + 0.5 * Math.sin(t));
+          const half = s * 0.5 * k,
+            r = Math.min(CFG.corner * k, half - 0.5);
+          ctx.fillStyle = "#fff";
+          for (let j = -1000; j <= 1000; j++) {
+            const rowOff = (Math.abs(j) % 2) * 0.5;
+            const y = cy + j * stepY;
+            if (y < -s * 2 || y > fbCanvas.height + s * 2) continue;
+            for (let i = -1000; i <= 1000; i++) {
+              const x = cx + (i + rowOff) * stepX;
+              if (x < -s * 2 || x > fbCanvas.width + s * 2) continue;
+              rr4(ctx, x - half, y - half, half * 2, half * 2, r, 0, r, 0);
+              ctx.fill();
             }
-            requestAnimationFrame(draw);
           }
-          addEventListener("resize", resize2);
-          resize2();
-          draw();
+          requestAnimationFrame(draw);
         }
-      })();
-    </script>
-  </body>
+        addEventListener("resize", resize2);
+        resize2();
+        draw();
+      }
+    })();
+  </script>
+</body>
+
 </html>

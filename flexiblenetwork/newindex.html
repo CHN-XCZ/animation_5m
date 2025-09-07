@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>矩形网格 + X形 Squircle · 数字输入 Grid + 比例缩放（无接缝）</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #0b0f14
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block
+    }
+
+    .ui {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      z-index: 10;
+      display: grid;
+      gap: 10px;
+      grid-auto-rows: min-content;
+      padding: 12px;
+      border: 1px solid #223;
+      border-radius: 12px;
+      background: rgba(10, 16, 24, .75);
+      backdrop-filter: blur(6px);
+      color: #e6eefc;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap
+    }
+
+    .row label {
+      white-space: nowrap
+    }
+
+    input[type="range"] {
+      width: 240px
+    }
+
+    input[type="number"] {
+      width: 100px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid #2a3340;
+      background: #0f141b;
+      color: #e6eefc
+    }
+
+    .value {
+      font-variant-numeric: tabular-nums;
+      opacity: .9;
+      min-width: 7.5ch;
+      text-align: right;
+      display: inline-block
+    }
+
+    .sep {
+      height: 1px;
+      background: #223;
+      margin: 6px 0 2px
+    }
+
+    .muted {
+      font-size: 12px;
+      opacity: .8
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="gl"></canvas>
+
+  <div class="ui">
+    <div class="row"><label><input id="toggleGrid" type="checkbox"> 显示网格</label></div>
+
+    <div class="row">
+      <label for="gridXNum">Grid X (px)</label>
+      <input id="gridXNum" type="number" min="4" max="2048" step="0.01" />
+      <label for="gridYNum">Grid Y (px)</label>
+      <input id="gridYNum" type="number" min="4" max="2048" step="0.01" />
+    </div>
+    <div class="row">
+      <label for="scale">缩放</label>
+      <input id="scale" type="range" min="0.1" max="4" step="0.01">
+      <span class="value" id="scaleVal"></span>
+      <span class="muted">实际：X=<span id="ax"></span>，Y=<span id="ay"></span></span>
+    </div>
+
+    <div class="sep"></div>
+    <div class="row">
+      <label for="sizePx">方块半径 R</label>
+      <input id="sizePx" type="range" min="2" max="300" step="1">
+      <span class="value" id="sizePxVal"></span>
+    </div>
+    <div class="row">
+      <label for="pExp">方块圆角 P</label>
+      <input id="pExp" type="range" min="2" max="8" step="0.1">
+      <span class="value" id="pExpVal"></span>
+    </div>
+    <div class="muted">R 为 squircle 的半径（CSS px，独立于 Grid）；P=2 更圆，P=8 更方。</div>
+
+    <div class="sep"></div>
+    <div class="row">
+      <label for="roundR">连接圆角 r（% of min(GridX,GridY)）</label>
+      <input id="roundR" type="range" min="0" max="60" step="1">
+      <span class="value" id="roundRVal"></span>
+    </div>
+
+    <div class="sep"></div>
+    <div class="row">
+      <label for="connRange">连接范围</label>
+      <input id="connRange" type="range" min="0" max="80" step="0.1">
+      <span class="value" id="connRangeVal"></span>
+    </div>
+    <div class="row">
+      <label for="connThresh">阈值</label>
+      <input id="connThresh" type="range" min="0.1" max="4" step="0.01">
+      <span class="value" id="connThreshVal"></span>
+    </div>
+
+    <div class="sep"></div>
+    <div class="row">
+      <label for="aa">抗锯齿</label>
+      <input id="aa" type="range" min="0" max="2" step="0.05">
+      <span class="value" id="aaVal"></span>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById('gl');
+      /** @type {WebGLRenderingContext} */
+      const gl = canvas.getContext('webgl', {
+        antialias: false,
+        alpha: false,
+        premultipliedAlpha: false
+      });
+      if (!gl) {
+        alert('你的浏览器不支持 WebGL。');
+        return;
+      }
+
+      // ---------- 状态 + 本地存储 ----------
+      const LS_KEY = 'rect_grid_ratio_scale_squircle_union_AA_fixed_r_v2_noseam';
+      const state = Object.assign({
+        showGrid: false, // 默认关闭，避免误以为是接缝
+        baseGX: 64,
+        baseGY: 64,
+        scale: 1.00,
+        sizePx: 40,
+        pExp: 4.0,
+        roundR: 30,
+        connRange: 12,
+        connThresh: 1.0,
+        aa: 0.8
+      }, JSON.parse(localStorage.getItem(LS_KEY) || '{}'));
+
+      const $ = (id) => document.getElementById(id);
+      const fmt2 = (v) => Number(v).toFixed(2);
+
+      $('toggleGrid').checked = state.showGrid;
+      $('toggleGrid').addEventListener('change', () => {
+        state.showGrid = $('toggleGrid').checked;
+        save();
+        syncApplied();
+      });
+
+      function bindNumber2(id, key, {
+        min = 4,
+        max = 2048,
+        step = 0.01
+      } = {}) {
+        const el = $(id);
+        const clamp = (v) => {
+          v = Number(v);
+          if (!Number.isFinite(v)) return state[key];
+          v = Math.round(v / step) * step;
+          return Math.min(max, Math.max(min, v));
+        };
+        el.value = String(state[key]);
+        el.addEventListener('input', () => {
+          state[key] = Number(el.value);
+          save();
+          syncApplied();
+        });
+        el.addEventListener('change', () => {
+          state[key] = clamp(el.value);
+          el.value = String(state[key]);
+          save();
+          syncApplied();
+        });
+      }
+      bindNumber2('gridXNum', 'baseGX');
+      bindNumber2('gridYNum', 'baseGY');
+
+      function bindRange(id, fmt, key = id) {
+        const el = $(id),
+          val = $(id + 'Val');
+        const sync = () => {
+          el.value = String(state[key]);
+          val.textContent = fmt(state[key]);
+        };
+        const on = () => {
+          state[key] = +el.value;
+          val.textContent = fmt(state[key]);
+          save();
+          syncApplied();
+        };
+        sync();
+        el.addEventListener('input', on);
+      }
+      bindRange('scale', v => Number(v).toFixed(2), 'scale');
+      bindRange('sizePx', v => v + ' px', 'sizePx');
+      bindRange('pExp', v => Number(v).toFixed(1), 'pExp');
+      bindRange('roundR', v => v + '%', 'roundR');
+      bindRange('connRange', v => Number(v).toFixed(1) + ' px', 'connRange');
+      bindRange('connThresh', v => Number(v).toFixed(2), 'connThresh');
+      bindRange('aa', v => Number(v).toFixed(2), 'aa');
+
+      const save = () => {
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify(state));
+        } catch (_) {}
+      };
+
+      // 计算“实际 X/Y”（按比例；保留两位小数）
+      let appliedGX = state.baseGX * state.scale;
+      let appliedGY = state.baseGY * state.scale;
+
+      function syncApplied() {
+        const bx = Math.max(4, Number.isFinite(state.baseGX) ? state.baseGX : 64);
+        const by = Math.max(4, Number.isFinite(state.baseGY) ? state.baseGY : 64);
+        const s = Math.max(0.1, state.scale);
+        appliedGX = Math.max(4, parseFloat(fmt2(bx * s)));
+        appliedGY = Math.max(4, parseFloat(fmt2(by * s)));
+        $('ax').textContent = fmt2(appliedGX) + 'px';
+        $('ay').textContent = fmt2(appliedGY) + 'px';
+      }
+      syncApplied();
+
+      // ---------- 着色器 ----------
+      const vertSrc = `attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0.0,1.0); }`;
+
+      // 去缝策略：对每个中心 s，计算到最近周期像的位移
+      // wrapDelta(d,L) = d - L * floor(d/L + 0.5)
+      const fragSrc = `
+  precision highp float;
+  uniform vec2  u_resolution;
+  uniform float u_gridX, u_gridY, u_showGrid;
+  uniform float u_sizePx, u_pExp, u_roundR;
+  uniform float u_falloff, u_thresh, u_aa;
+
+  float lengthP(vec2 v, float p){ v=abs(v); return pow(pow(v.x,p)+pow(v.y,p), 1.0/p); }
+  float sdfSquircle(vec2 p, float R, float pw){
+    vec2 q = abs(p);
+    return pow(pow(q.x,pw)+pow(q.y,pw), 1.0/pw) - R;
+  }
+  float opUnionRoundP(float d1,float d2,float r,float pw){
+    vec2 u=max(vec2(r-d1,r-d2), vec2(0.0));
+    return max(r, min(d1,d2)) - lengthP(u, pw);
+  }
+  vec2 wrapDelta(vec2 d, vec2 L){ return d - L * floor(d / L + 0.5); }
+
+  void main(){
+    float P = clamp(u_pExp, 2.0, 8.0);
+    vec2 frag = gl_FragCoord.xy;
+    vec2 C = floor(0.5*u_resolution);
+    vec2 p = frag - C;
+
+    float gx = max(0.01, u_gridX);
+    float gy = max(0.01, u_gridY);
+    float gMin = min(gx, gy);
+    vec2  L   = vec2(2.0*gx, 2.0*gy); // 周期
+
+    // 可选网格（默认关闭）
+    float gridCol=0.0;
+    if(u_showGrid>0.5){
+      vec2 ij=floor(frag), gc=floor(0.5*u_resolution);
+      float rx=abs(mod(ij.x-gc.x, gx));
+      float ry=abs(mod(ij.y-gc.y, gy));
+      float vLine=1.0-step(0.5, rx);
+      float hLine=1.0-step(0.5, ry);
+      gridCol=min(vLine+hLine,1.0);
+    }
+
+    float R = max(0.0, u_sizePx);
+    float r = gMin * max(u_roundR/100.0, 0.0);
+
+    // 固定一组中心，不随像素而变：
+    // 0：原点；1..4：四个对角 (±gx, ±gy)，距离用最近周期像
+    float d0 = sdfSquircle( wrapDelta(p - vec2(0.0), vec2(L.x,L.y)), R, P );
+    float d1 = sdfSquircle( wrapDelta(p - vec2( gx,  gy), L), R, P );
+    float d2 = sdfSquircle( wrapDelta(p - vec2(-gx,  gy), L), R, P );
+    float d3 = sdfSquircle( wrapDelta(p - vec2( gx, -gy), L), R, P );
+    float d4 = sdfSquircle( wrapDelta(p - vec2(-gx, -gy), L), R, P );
+
+    // 圆角并集（无缝）
+    float d = d0;
+    d = opUnionRoundP(d, d1, r, P);
+    d = opUnionRoundP(d, d2, r, P);
+    d = opUnionRoundP(d, d3, r, P);
+    d = opUnionRoundP(d, d4, r, P);
+
+    // 连接场（仅 d_i>0 累加，防止中心鼓包）
+    float phi = 0.0;
+    if(d0>0.0) phi += exp(-u_falloff * d0);
+    if(d1>0.0) phi += exp(-u_falloff * d1);
+    if(d2>0.0) phi += exp(-u_falloff * d2);
+    if(d3>0.0) phi += exp(-u_falloff * d3);
+    if(d4>0.0) phi += exp(-u_falloff * d4);
+
+    // 抗锯齿
+    float aa = max(u_aa, 0.0);
+    float shapeAA = smoothstep(aa, -aa, d); // d<0 -> 1
+    float phiAA   = clamp(1.0 - exp(-u_falloff * aa), 0.0, 0.5);
+    float fieldAA = smoothstep(u_thresh - phiAA, u_thresh + phiAA, phi);
+
+    float col = max(gridCol, max(shapeAA, fieldAA));
+    gl_FragColor = vec4(vec3(col), 1.0);
+  }`;
+
+      function sh(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+          const info = gl.getShaderInfoLog(s);
+          gl.deleteShader(s);
+          throw new Error('Shader compile failed: ' + info);
+        }
+        return s;
+      }
+
+      function prog(vs, fs) {
+        const p = gl.createProgram();
+        gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
+        gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          const info = gl.getProgramInfoLog(p);
+          gl.deleteProgram(p);
+          throw new Error('Program link failed: ' + info);
+        }
+        return p;
+      }
+
+      const program = prog(vertSrc, fragSrc);
+      gl.useProgram(program);
+      const quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, 1]);
+      const vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+      const a_pos = gl.getAttribLocation(program, 'a_pos');
+      gl.enableVertexAttribArray(a_pos);
+      gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+      // uniforms
+      const U = n => gl.getUniformLocation(program, n);
+      const u_resolution = U('u_resolution'),
+        u_gridX = U('u_gridX'),
+        u_gridY = U('u_gridY'),
+        u_showGrid = U('u_showGrid');
+      const u_sizePx = U('u_sizePx'),
+        u_pExp = U('u_pExp'),
+        u_roundR = U('u_roundR');
+      const u_falloff = U('u_falloff'),
+        u_thresh = U('u_thresh'),
+        u_aa = U('u_aa');
+
+      function resize() {
+        const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+        const w = Math.floor(canvas.clientWidth * dpr),
+          h = Math.floor(canvas.clientHeight * dpr);
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          gl.viewport(0, 0, w, h);
+        }
+        gl.uniform2f(u_resolution, canvas.width, canvas.height);
+        return dpr;
+      }
+
+      // 应用后的 Grid（按比例，并保留两位小数用于显示；着色器用物理 px）
+      // let appliedGX = state.baseGX * state.scale;
+      // let appliedGY = state.baseGY * state.scale;
+
+      function syncApplied() {
+        const bx = Math.max(4, Number.isFinite(state.baseGX) ? state.baseGX : 64);
+        const by = Math.max(4, Number.isFinite(state.baseGY) ? state.baseGY : 64);
+        const s = Math.max(0.1, state.scale);
+        appliedGX = Math.max(4, parseFloat((bx * s).toFixed(2)));
+        appliedGY = Math.max(4, parseFloat((by * s).toFixed(2)));
+        document.getElementById('ax').textContent = appliedGX.toFixed(2) + 'px';
+        document.getElementById('ay').textContent = appliedGY.toFixed(2) + 'px';
+      }
+
+      function draw() {
+        const dpr = resize();
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        const gx = Math.max(0.01, appliedGX * dpr);
+        const gy = Math.max(0.01, appliedGY * dpr);
+
+        const rangePx = Math.max(0.0, state.connRange) * dpr;
+        const k = (rangePx > 0) ? Math.log(2.0) / rangePx : 1e9;
+
+        gl.uniform1f(u_gridX, gx);
+        gl.uniform1f(u_gridY, gy);
+        gl.uniform1f(u_showGrid, state.showGrid ? 1 : 0);
+
+        gl.uniform1f(u_sizePx, Math.max(0, state.sizePx * dpr));
+        gl.uniform1f(u_pExp, state.pExp);
+        gl.uniform1f(u_roundR, state.roundR);
+
+        gl.uniform1f(u_falloff, k);
+        gl.uniform1f(u_thresh, state.connThresh);
+        gl.uniform1f(u_aa, state.aa * dpr);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        requestAnimationFrame(draw);
+      }
+      draw();
+
+      // 初始显示
+      document.getElementById('scaleVal').textContent = state.scale.toFixed(2);
+      document.getElementById('sizePxVal').textContent = state.sizePx + ' px';
+      document.getElementById('pExpVal').textContent = state.pExp.toFixed(1);
+      document.getElementById('roundRVal').textContent = state.roundR + '%';
+      document.getElementById('connRangeVal').textContent = state.connRange.toFixed(1) + ' px';
+      document.getElementById('connThreshVal').textContent = state.connThresh.toFixed(2);
+      document.getElementById('aaVal').textContent = state.aa.toFixed(2);
+
+      // 覆盖全屏
+      Object.assign(canvas.style, {
+        left: '0px',
+        top: '0px',
+        width: '100vw',
+        height: '100vh'
+      });
+    })();
+  </script>
+</body>
+
+</html>
