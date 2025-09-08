@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>满屏粘连方块（FBO 位移场：自回弹·无尾巴上限）</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #0b0f14;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .ui {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        bottom: 16px;
+        width: max(260px, 22vw);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 10;
+        background: #0f141b;
+        border: 1px solid #2a3340;
+        border-radius: 12px;
+        padding: 12px;
+        overflow: auto;
+      }
+      .row {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .h {
+        margin: 0;
+        font: 700 12px/1 ui-sans-serif, system-ui;
+        color: #cdd6f4;
+        opacity: 0.8;
+      }
+      .label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font: 12px/1 ui-sans-serif, system-ui;
+        color: #cdd6f4;
+      }
+      .val {
+        color: #e6eefc;
+        font-weight: 700;
+        margin-left: 8px;
+        min-width: 84px;
+        text-align: right;
+      }
+      input[type="range"] {
+        width: 100%;
+      }
+      .btn {
+        cursor: pointer;
+        border: 1px solid #2a3340;
+        background: #101825;
+        color: #e6eefc;
+        padding: 8px 12px;
+        border-radius: 10px;
+        font: 600 12px/1 ui-sans-serif, system-ui;
+        margin-bottom: 6px;
+      }
+      .btn[aria-pressed="true"] {
+        background: #1b2a40;
+        border-color: #314257;
+      }
+      .err {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        color: #ffebee;
+        background: #3b1d22;
+        border: 1px solid #6b2a36;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: 12px/1.4 ui-sans-serif, system-ui;
+        max-width: 70ch;
+        white-space: pre-wrap;
+        z-index: 10;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gl"></canvas>
+    <canvas id="fallback" style="z-index: -1"></canvas>
+
+    <div class="ui" id="controls">
+      <button id="pulse" class="btn" aria-pressed="false">脉动：关 (P)</button>
+      <button id="pluck" class="btn" aria-pressed="true">拨动：开 (O)</button>
+
+      <div class="row">
+        <h3 class="h">方块</h3>
+        <div class="label">尺寸 <span id="vSize" class="val"></span></div>
+        <input id="sizeRange" type="range" min="0" max="200" step="0.5" />
+        <div class="label">圆角(px) <span id="vRadius" class="val"></span></div>
+        <input id="radiusRange" type="range" min="0" max="100" step="0.5" />
+        <div class="label">圆角AA(px) <span id="vAA" class="val"></span></div>
+        <input id="aaRange" type="range" min="0" max="4" step="0.05" />
+      </div>
+
+      <div class="row">
+        <h3 class="h">间距（边到边，可为负）</h3>
+        <div class="label">
+          水平间距 ΔX <span id="vGapX" class="val"></span>
+        </div>
+        <input id="gapXRange" type="range" min="-200" max="200" step="0.5" />
+        <div class="label">
+          垂直间距 ΔY <span id="vGapY" class="val"></span>
+        </div>
+        <input id="gapYRange" type="range" min="-200" max="200" step="0.5" />
+        <div class="label">
+          当前实际：X/Y <span id="vGapReal" class="val"></span>
+        </div>
+      </div>
+
+      <div class="row">
+        <h3 class="h">粘连/阈值</h3>
+        <div class="label">连接范围 <span id="vCR" class="val"></span></div>
+        <input id="crRange" type="range" min="0" max="12" step="0.1" />
+        <div class="label">阈值 <span id="vTh" class="val"></span></div>
+        <input id="thRange" type="range" min="0.1" max="4" step="0.01" />
+        <div class="label">
+          连接柔边(φ-AA) <span id="vPhiAA" class="val"></span>
+        </div>
+        <input id="phiAARange" type="range" min="0.0" max="1.5" step="0.01" />
+        <div class="label">
+          角偏置 Corner Bias <span id="vCBias" class="val"></span>
+        </div>
+        <input id="cbiasRange" type="range" min="0.2" max="2.5" step="0.01" />
+      </div>
+
+      <div class="row">
+        <h3 class="h">脉动（默认关）</h3>
+        <div class="label">速度 <span id="vSpeed" class="val"></span></div>
+        <input id="speedRange" type="range" min="0" max="3" step="0.01" />
+      </div>
+
+      <div class="row">
+        <h3 class="h">拨动波</h3>
+        <div class="label">
+          速度→强度比例 <span id="vRatio" class="val"></span>
+        </div>
+        <input id="ratioRange" type="range" min="0" max="0.1" step="0.001" />
+        <div class="label">
+          释放延时(ms, 轨迹尾巴) <span id="vDelay" class="val"></span>
+        </div>
+        <input id="delayRange" type="range" min="0" max="500" step="10" />
+        <div class="label">
+          σ (盖印半径px) <span id="vSig" class="val"></span>
+        </div>
+        <input id="sigRange" type="range" min="10" max="400" step="1" />
+        <div class="label">
+          λ（仅影响采样步长）<span id="vLam" class="val"></span>
+        </div>
+        <input id="lamRange" type="range" min="20" max="800" step="1" />
+        <div class="label">f(Hz) <span id="vFq" class="val"></span></div>
+        <input id="fqRange" type="range" min="0" max="5" step="0.01" />
+        <div class="label">γ（阻尼） <span id="vGam" class="val"></span></div>
+        <input id="gamRange" type="range" min="0" max="4" step="0.01" />
+      </div>
+
+      <div class="row">
+        <h3 class="h">速度绑定</h3>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <button id="bindAmp" class="btn" aria-pressed="true">
+            amp↔速：正比
+          </button>
+          <button id="bindSig" class="btn" aria-pressed="true">
+            σ↔速：正比
+          </button>
+          <button id="bindLam" class="btn" aria-pressed="true">
+            λ↔速：正比
+          </button>
+          <button id="bindFq" class="btn" aria-pressed="true">
+            f↔速：正比
+          </button>
+          <button id="bindGam" class="btn" aria-pressed="true">
+            γ↔速：正比
+          </button>
+        </div>
+        <div class="label">
+          速度上限(px/s) <span id="vSCap" class="val"></span>
+        </div>
+        <input id="speedCapRange" type="range" min="200" max="4000" step="10" />
+        <div class="label">映射强度 <span id="vSEff" class="val"></span></div>
+        <input id="speedEffRange" type="range" min="0" max="2" step="0.01" />
+        <div class="label">当前速度 <span id="vMS" class="val"></span></div>
+      </div>
+    </div>
+
+    <div id="err" class="err"></div>
+
+    <script>
+      (() => {
+        // ———— 存储 ————
+        const STORE = "stickySquares.FBOField.v1";
+        const saved = (() => {
+          try {
+            return JSON.parse(localStorage.getItem(STORE) || "null");
+          } catch {
+            return null;
+          }
+        })();
+
+        const snap05 = (v) => Math.round(v * 2) / 2;
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+        // ———— 视觉参数（基本沿用） ————
+        const CFG = {
+          size: snap05(saved?.size ?? 24),
+          corner: snap05(saved?.corner ?? 8),
+          aa: saved?.aa ?? 1.0,
+          pulseSpeedHz: 0.3,
+          pulseMin: 0.0,
+          connectRange: saved?.connectRange ?? 2.0,
+          threshold: saved?.threshold ?? 1.0,
+          phiAA: saved?.phiAA ?? 0.2,
+          cornerBias: saved?.cornerBias ?? 1.0,
+        };
+        const GAP = {
+          x: snap05(saved?.gapX ?? 8),
+          y: snap05(saved?.gapY ?? 8),
+        };
+        const CELL = {
+          stepX: snap05(saved?.stepX ?? 2 * CFG.size + GAP.x),
+          stepY: snap05(saved?.stepY ?? 1 * CFG.size + GAP.y),
+        };
+
+        // ———— 场（FBO）参数 ————
+        const WAVE = {
+          amp: saved?.amp ?? 20,
+          sigma: saved?.sigma ?? 60,
+          lambda: saved?.lambda ?? 120,
+          freq: saved?.freq ?? 1.2,
+          gamma: saved?.gamma ?? 1.0,
+        };
+        const PLUCK = {
+          ratio: saved?.ratio ?? 0.001,
+          delayMs: saved?.delayMs ?? 0,
+        }; // 这里的 delay 对 FBO 方案可为 0
+        const AMP_CAP = 20;
+
+        // 速度绑定三态：1 正比 / 0 关闭 / -1 反比
+        const SPEEDBIND = {
+          capPx: saved?.capPx ?? 1600,
+          effect: saved?.effect ?? 1.0,
+          ampMode: saved?.ampMode ?? 1,
+          sigMode: saved?.sigMode ?? 1,
+          lamMode: saved?.lamMode ?? 1,
+          fqMode: saved?.fqMode ?? 1,
+          gamMode: saved?.gamMode ?? 1,
+        };
+
+        function persist() {
+          localStorage.setItem(
+            STORE,
+            JSON.stringify({
+              size: CFG.size,
+              corner: CFG.corner,
+              aa: CFG.aa,
+              gapX: GAP.x,
+              gapY: GAP.y,
+              stepX: CELL.stepX,
+              stepY: CELL.stepY,
+              connectRange: CFG.connectRange,
+              threshold: CFG.threshold,
+              phiAA: CFG.phiAA,
+              cornerBias: CFG.cornerBias,
+              amp: WAVE.amp,
+              sigma: WAVE.sigma,
+              lambda: WAVE.lambda,
+              freq: WAVE.freq,
+              gamma: WAVE.gamma,
+              ratio: PLUCK.ratio,
+              delayMs: PLUCK.delayMs,
+              capPx: SPEEDBIND.capPx,
+              effect: SPEEDBIND.effect,
+              ampMode: SPEEDBIND.ampMode,
+              sigMode: SPEEDBIND.sigMode,
+              lamMode: SPEEDBIND.lamMode,
+              fqMode: SPEEDBIND.fqMode,
+              gamMode: SPEEDBIND.gamMode,
+            })
+          );
+        }
+
+        // ———— WebGL 基础 ————
+        const DPR = Math.min(2, window.devicePixelRatio || 1);
+        const glCanvas = document.getElementById("gl");
+        const fbCanvas = document.getElementById("fallback");
+        const errBox = document.getElementById("err");
+
+        const gl = glCanvas.getContext("webgl", {
+          antialias: false,
+          alpha: false,
+          premultipliedAlpha: false,
+        });
+        if (!gl) {
+          showErr("未启用 WebGL，已回退 Canvas2D。");
+          startFallback();
+          return;
+        }
+
+        const hasDeriv = !!gl.getExtension("OES_standard_derivatives");
+
+        // 浮点纹理能力探测
+        const extHF = gl.getExtension("OES_texture_half_float");
+        const extHFc = gl.getExtension("EXT_color_buffer_half_float");
+        const extF32 =
+          gl.getExtension("OES_texture_float") &&
+          gl.getExtension("WEBGL_color_buffer_float");
+
+        const FIELD_USE_HALF = !!(extHF && extHFc);
+        const FIELD_USE_F32 = !FIELD_USE_HALF && !!extF32;
+
+        function showErr(msg) {
+          errBox.style.display = "block";
+          errBox.textContent = msg;
+          fbCanvas.style.zIndex = "1";
+        }
+
+        const VERT_FSQR = `
+  attribute vec2 a_pos;
+  varying vec2 v_uv;
+  void main(){
+    v_uv = 0.5 * (a_pos + 1.0);
+    gl_Position = vec4(a_pos,0.0,1.0);
+  }`;
+
+        const VERT_BIGTRI = `
+  attribute vec2 a_pos;
+  void main(){ gl_Position = vec4(a_pos,0.0,1.0); }`;
+
+        // —— 主片元（读取 FBO 场 → 扭曲 uv → 画格子） —— //
+        function buildMainFrag() {
+          return `
+${hasDeriv ? "#extension GL_OES_standard_derivatives : enable" : ""}
+#ifdef GL_ES
+  precision highp float;
+#endif
+uniform vec2  u_res;           // 画布像素分辨率
+uniform vec2  u_texSize;       // 场纹理分辨率（像素）
+uniform float u_time;
+
+// 栅格/形状
+uniform vec2  u_half0;
+uniform vec4  u_radius4;
+uniform vec2  u_step;
+uniform float u_pulseMin, u_pulseHz;
+uniform float u_thresh, u_falloff, u_aa;
+
+// 波参数
+uniform float u_freq;          // 全局频率（Hz）
+uniform float u_gamma;         // 仅用于 UI 展示（真正的阻尼在 FBO pass 里做）
+
+// φ-AA + 角偏置
+uniform float u_phiAA;
+uniform float u_cornerBias;
+
+// 位移场纹理（Zx_re, Zx_im, Zy_re, Zy_im）
+uniform sampler2D u_field;
+
+// utils
+float sdRoundBoxCorners(vec2 p, vec2 b, vec4 r4){
+  vec2 s = sign(p);
+  float r = (s.x>0.0) ? ((s.y>0.0)? r4.x : r4.w)
+                      : ((s.y>0.0)? r4.y : r4.z);
+  r = clamp(r, 0.0, min(b.x,b.y)-1.0);
+  vec2 q = abs(p) - (b - vec2(r));
+  return length(max(q, vec2(0.0))) - r;
+}
+float cornerMask(vec2 p, vec2 b, vec4 r4){
+  float rr = min(min(r4.x,r4.y), min(r4.z,r4.w));
+  vec2 q = abs(p) - (b - vec2(rr));
+  float cx = step(0.0, q.x), cy = step(0.0, q.y);
+  return cx * cy;
+}
+
+// 从场纹理重建当前位移（复振幅 Z · e^{iωt} 的实部）
+vec2 displacement(vec2 fragPx){
+  vec2 tc = (fragPx + 0.5) / u_texSize;
+  vec4 Z = texture2D(u_field, tc);
+  float w = 6.2831853 * u_freq * u_time;
+  float cw = cos(w), sw = sin(w);
+  return vec2(
+    Z.r * cw - Z.g * sw,   // X
+    Z.b * cw - Z.a * sw    // Y
+  );
+}
+
+void main(){
+  vec2 uv = gl_FragCoord.xy;
+  vec2 C  = u_res * 0.5;
+
+  // 取位移并扭曲坐标
+  vec2 uv2 = uv - displacement(uv);
+
+  // 脉动（全局缩放）
+  float phase = 0.5 + 0.5 * sin(6.2831853 * u_pulseHz * u_time);
+  float pulse = u_pulseMin + (1.0 - u_pulseMin) * phase;
+
+  float dmin = 1e6;
+  float insideF = 0.0;
+  float phi = 0.0;
+
+  float jBase = floor((uv2.y - C.y) / u_step.y + 0.5);
+  for(int jy=-1;jy<=1;jy++){
+    float j = jBase + float(jy);
+    float rowOff = mod(abs(j), 2.0) * 0.5;
+    float iBase = floor((uv2.x - C.x - rowOff*u_step.x) / u_step.x + 0.5);
+    for(int ix=-1; ix<=1; ix++){
+      float i = iBase + float(ix);
+      vec2 center = vec2(C.x + (i + rowOff) * u_step.x,
+                         C.y +  j            * u_step.y);
+
+      vec2 hSize  = u_half0 * pulse;
+      vec4 r4     = u_radius4 * pulse;
+
+      vec2 lp = uv2 - center;
+      float d     = sdRoundBoxCorners(lp, hSize, r4);
+      dmin = min(dmin, d);
+      if(d <= 0.0) insideF = 1.0;
+
+      float wCorner = cornerMask(lp, hSize, r4);
+      float w = mix(1.0, u_cornerBias, wCorner);
+      phi += w * exp(-u_falloff * max(d, 0.0));
+    }
+  }
+
+  float wAA = max(u_phiAA, 0.0001);
+  ${hasDeriv ? "wAA = max(wAA, fwidth(phi));" : ""}
+  float connected = smoothstep(u_thresh - wAA, u_thresh + wAA, phi);
+
+  float edge = clamp(1.0 - smoothstep(0.0, u_aa, dmin), 0.0, 1.0);
+  float mask = (insideF > 0.5) ? 1.0 : connected;
+  mask = max(mask, edge * 0.95);
+
+  gl_FragColor = vec4(vec3(mask), 1.0);
+}`;
+        }
+
+        // —— 衰减 pass（上一帧场 × decay；可选轻模糊略去） —— //
+        const FRAG_DECAY = `
+#ifdef GL_ES
+precision highp float;
+#endif
+varying vec2 v_uv;
+uniform sampler2D u_prev;
+uniform float u_decay;  // exp(-γ·dt)
+void main(){
+  vec4 z = texture2D(u_prev, v_uv);
+  gl_FragColor = z * u_decay;
+}`;
+
+        // —— 盖印 pass（把一次事件写进场：高斯 + 方向 + 复相位） —— //
+        const FRAG_SPLAT = `
+#ifdef GL_ES
+precision highp float;
+#endif
+uniform vec2  u_res;
+uniform vec2  u_center;    // 像素坐标
+uniform float u_sigma;     // 高斯半径（像素）
+uniform float u_amp;       // 振幅（像素）
+uniform vec2  u_dir;       // 单位方向 (cosθ, sinθ)
+uniform float u_t;         // 事件发生时刻（秒）
+uniform float u_freq;      // 频率（Hz）
+void main(){
+  vec2 px = gl_FragCoord.xy;
+  float r = length(px - u_center);
+  float w = exp(-r / max(1.0, u_sigma)); // 与原版一致：e^{-r/σ}
+
+  // 复相位：e^{-i ω t0} → (cos, -sin)
+  float w0 = 6.2831853 * u_freq * u_t;
+  float c0 = cos(w0), s0 = -sin(w0);
+
+  // x/y 两路的 (Re, Im)
+  vec2 add = u_amp * w * u_dir;
+  gl_FragColor = vec4(add.x * c0, add.x * s0,   // Zx_re, Zx_im
+                      add.y * c0, add.y * s0);  // Zy_re, Zy_im
+}`;
+
+        // —— 工具：编译/程序/缓冲 —— //
+        function compile(type, src) {
+          const s = gl.createShader(type);
+          gl.shaderSource(s, src);
+          gl.compileShader(s);
+          if (
+            !gl.getShaderParameter(s, gl.Compile_STATUS ?? gl.COMPILE_STATUS)
+          ) {
+            const log = gl.getShaderInfoLog(s) || "(empty log)";
+            gl.deleteShader(s);
+            throw new Error(log);
+          }
+          return s;
+        }
+        function link(vs, fs) {
+          const p = gl.createProgram();
+          gl.attachShader(p, vs);
+          gl.attachShader(p, fs);
+          gl.linkProgram(p);
+          if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+            throw new Error(gl.getProgramInfoLog(p));
+          return p;
+        }
+
+        // 全屏三角
+        const bigtri = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, bigtri);
+        gl.bufferData(
+          gl.ARRAY_BUFFER,
+          new Float32Array([-1, -1, 3, -1, -1, 3]),
+          gl.STATIC_DRAW
+        );
+
+        // 方形顶点（splat 可用剪裁，不必小网格）
+        const fsqrBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, fsqrBuf);
+        gl.bufferData(
+          gl.ARRAY_BUFFER,
+          new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+          gl.STATIC_DRAW
+        );
+
+        // 主程序
+        const progMain = link(
+          compile(gl.VERTEX_SHADER, VERT_BIGTRI),
+          compile(gl.FRAGMENT_SHADER, buildMainFrag())
+        );
+        const a_pos_main = gl.getAttribLocation(progMain, "a_pos");
+
+        const U = (p, n) => gl.getUniformLocation(p, n);
+        const uM = {
+          u_res: U(progMain, "u_res"),
+          u_texSize: U(progMain, "u_texSize"),
+          u_time: U(progMain, "u_time"),
+          u_half0: U(progMain, "u_half0"),
+          u_radius4: U(progMain, "u_radius4"),
+          u_step: U(progMain, "u_step"),
+          u_pulseMin: U(progMain, "u_pulseMin"),
+          u_pulseHz: U(progMain, "u_pulseHz"),
+          u_thresh: U(progMain, "u_thresh"),
+          u_falloff: U(progMain, "u_falloff"),
+          u_aa: U(progMain, "u_aa"),
+          u_freq: U(progMain, "u_freq"),
+          u_gamma: U(progMain, "u_gamma"),
+          u_phiAA: U(progMain, "u_phiAA"),
+          u_cornerBias: U(progMain, "u_cornerBias"),
+          u_field: U(progMain, "u_field"),
+        };
+
+        // 衰减程序
+        const progDecay = link(
+          compile(gl.VERTEX_SHADER, VERT_FSQR),
+          compile(gl.FRAGMENT_SHADER, FRAG_DECAY)
+        );
+        const a_pos_fsqr = gl.getAttribLocation(progDecay, "a_pos");
+        const uD = {
+          u_prev: U(progDecay, "u_prev"),
+          u_decay: U(progDecay, "u_decay"),
+        };
+
+        // 盖印程序
+        const progSplat = link(
+          compile(gl.VERTEX_SHADER, VERT_BIGTRI),
+          compile(gl.FRAGMENT_SHADER, FRAG_SPLAT)
+        );
+        const a_pos_splat = gl.getAttribLocation(progSplat, "a_pos");
+        const uS = {
+          u_res: U(progSplat, "u_res"),
+          u_center: U(progSplat, "u_center"),
+          u_sigma: U(progSplat, "u_sigma"),
+          u_amp: U(progSplat, "u_amp"),
+          u_dir: U(progSplat, "u_dir"),
+          u_t: U(progSplat, "u_t"),
+          u_freq: U(progSplat, "u_freq"),
+        };
+
+        // —— 场纹理（ping-pong） —— //
+        let fieldA = null,
+          fieldB = null,
+          fboA = null,
+          fboB = null,
+          fieldW = 0,
+          fieldH = 0;
+
+        function makeFieldTex(w, h) {
+          const tex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          const fmt = gl.RGBA;
+          const filter = gl.LINEAR;
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+          if (FIELD_USE_HALF) {
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.RGBA,
+              w,
+              h,
+              0,
+              fmt,
+              extHF.HALF_FLOAT_OES,
+              null
+            );
+          } else if (FIELD_USE_F32) {
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.RGBA,
+              w,
+              h,
+              0,
+              fmt,
+              gl.FLOAT,
+              null
+            );
+          } else {
+            gl.texImage2D(
+              gl.TEXTURE_2D,
+              0,
+              gl.RGBA,
+              w,
+              h,
+              0,
+              fmt,
+              gl.UNSIGNED_BYTE,
+              null
+            );
+          }
+          return tex;
+        }
+        function makeFBO(tex) {
+          const fb = gl.createFramebuffer();
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+          gl.framebufferTexture2D(
+            gl.FRAMEBUFFER,
+            gl.COLOR_ATTACHMENT0,
+            gl.TEXTURE_2D,
+            tex,
+            0
+          );
+          const ok =
+            gl.checkFramebufferStatus(gl.FRAMEBUFFER) ===
+            gl.FRAMEBUFFER_COMPLETE;
+          if (!ok)
+            showErr("场纹理帧缓冲不完整（可能设备不支持浮点渲染），已降级。");
+          return fb;
+        }
+        function initField() {
+          fieldW = Math.max(2, Math.floor(innerWidth * DPR));
+          fieldH = Math.max(2, Math.floor(innerHeight * DPR));
+          fieldA && gl.deleteTexture(fieldA);
+          fieldB && gl.deleteTexture(fieldB);
+          fboA && gl.deleteFramebuffer(fboA);
+          fboB && gl.deleteFramebuffer(fboB);
+          fieldA = makeFieldTex(fieldW, fieldH);
+          fieldB = makeFieldTex(fieldW, fieldH);
+          fboA = makeFBO(fieldA);
+          fboB = makeFBO(fieldB);
+
+          // 清零
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fboA);
+          gl.viewport(0, 0, fieldW, fieldH);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fboB);
+          gl.viewport(0, 0, fieldW, fieldH);
+          gl.clearColor(0, 0, 0, 0);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+
+        function resize() {
+          const w = Math.floor(innerWidth * DPR),
+            h = Math.floor(innerHeight * DPR);
+          glCanvas.width = w;
+          glCanvas.height = h;
+          glCanvas.style.width = innerWidth + "px";
+          glCanvas.style.height = innerHeight + "px";
+          gl.viewport(0, 0, w, h);
+          initField();
+          // 👉 新增：同步主片元的尺寸与场纹理尺寸
+          gl.useProgram(progMain);
+          gl.uniform2f(uM.u_res, w, h);
+          gl.uniform2f(uM.u_texSize, fieldW, fieldH);
+        }
+
+        addEventListener("resize", resize);
+
+        // —— UI 绑定（基本同原先） —— //
+        const id = (x) => document.getElementById(x);
+        const sizeR = id("sizeRange"),
+          radR = id("radiusRange"),
+          aaR = id("aaRange");
+        const gapXR = id("gapXRange"),
+          gapYR = id("gapYRange");
+        const vSize = id("vSize"),
+          vRad = id("vRadius"),
+          vAA = id("vAA");
+        const vGapX = id("vGapX"),
+          vGapY = id("vGapY"),
+          vGapReal = id("vGapReal");
+        const spdR = id("speedRange"),
+          vSpd = id("vSpeed");
+        const crR = id("crRange"),
+          vCR = id("vCR");
+        const thR = id("thRange"),
+          vTh = id("vTh");
+        const phiAAR = id("phiAARange"),
+          vPhiAA = id("vPhiAA");
+        const cbiasR = id("cbiasRange"),
+          vCBias = id("vCBias");
+        const sigR = id("sigRange"),
+          lamR = id("lamRange"),
+          fqR = id("fqRange"),
+          gamR = id("gamRange");
+        const vSig = id("vSig"),
+          vLam = id("vLam"),
+          vFq = id("vFq"),
+          vGam = id("vGam");
+        const ratioR = id("ratioRange"),
+          vRatio = id("vRatio");
+        const delayR = id("delayRange"),
+          vDelay = id("vDelay");
+        const speedCapR = id("speedCapRange"),
+          speedEffR = id("speedEffRange");
+        const vSCap = id("vSCap"),
+          vSEff = id("vSEff"),
+          vMS = id("vMS");
+
+        let pluckOn = true,
+          pulseOn = false;
+        const btnPulse = document.getElementById("pulse"),
+          btnPluck = document.getElementById("pluck");
+        function applyPulseUniforms() {
+          gl.useProgram(progMain);
+          gl.uniform1f(uM.u_pulseMin, pulseOn ? CFG.pulseMin : 1.0);
+          gl.uniform1f(uM.u_pulseHz, pulseOn ? CFG.pulseSpeedHz : 0.0);
+        }
+        function refreshButtons() {
+          btnPulse.setAttribute("aria-pressed", pulseOn);
+          btnPulse.textContent = `脉动：${pulseOn ? "开" : "关"} (P)`;
+          btnPluck.setAttribute("aria-pressed", pluckOn);
+          btnPluck.textContent = `拨动：${pluckOn ? "开" : "关"} (O)`;
+        }
+        btnPulse.onclick = () => {
+          pulseOn = !pulseOn;
+          refreshButtons();
+          applyPulseUniforms();
+          persist();
+        };
+        btnPluck.onclick = () => {
+          pluckOn = !pluckOn;
+          refreshButtons();
+          persist();
+        };
+        addEventListener("keydown", (e) => {
+          if (e.key === "p" || e.key === "P") btnPulse.click();
+          if (e.key === "o" || e.key === "O") btnPluck.click();
+        });
+
+        function updateGapReadout() {
+          const gx = snap05(CELL.stepX - 2 * CFG.size);
+          const gy = snap05(CELL.stepY - 1 * CFG.size);
+          vGapReal.textContent = `${gx.toFixed(1)} / ${gy.toFixed(1)} px`;
+        }
+        function syncStatics() {
+          gl.useProgram(progMain);
+          const side = snap05(CFG.size);
+          const halfPx = Math.round((side * DPR) / 2);
+          gl.uniform2f(uM.u_half0, halfPx, halfPx);
+          const r = snap05(CFG.corner);
+          gl.uniform4f(uM.u_radius4, r * DPR, r * DPR, r * DPR, r * DPR);
+
+          gl.uniform1f(uM.u_aa, Math.max(0.0, CFG.aa * DPR));
+          gl.uniform1f(uM.u_thresh, CFG.threshold);
+          gl.uniform1f(
+            uM.u_falloff,
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
+          );
+          gl.uniform1f(uM.u_phiAA, CFG.phiAA);
+          gl.uniform1f(uM.u_cornerBias, CFG.cornerBias);
+
+          const sx = Math.round(Math.max(2, CELL.stepX * DPR));
+          const sy = Math.round(Math.max(2, CELL.stepY * DPR));
+          gl.uniform2f(uM.u_step, sx, sy);
+        }
+        function initSliders() {
+          sizeR.value = CFG.size;
+          vSize.textContent = CFG.size.toFixed(1) + " px";
+          radR.value = CFG.corner;
+          vRad.textContent = CFG.corner.toFixed(1) + " px";
+          aaR.value = CFG.aa;
+          vAA.textContent = CFG.aa.toFixed(2) + " px";
+
+          gapXR.value = GAP.x;
+          vGapX.textContent = GAP.x.toFixed(1) + " px";
+          gapYR.value = GAP.y;
+          vGapY.textContent = GAP.y.toFixed(1) + " px";
+
+          spdR.value = CFG.pulseSpeedHz;
+          vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
+          crR.value = CFG.connectRange;
+          vCR.textContent = CFG.connectRange.toFixed(1) + " px";
+          thR.value = CFG.threshold;
+          vTh.textContent = CFG.threshold.toFixed(2);
+          phiAAR.value = CFG.phiAA;
+          vPhiAA.textContent = CFG.phiAA.toFixed(2);
+          cbiasR.value = CFG.cornerBias;
+          vCBias.textContent = CFG.cornerBias.toFixed(2);
+
+          sigR.value = WAVE.sigma;
+          vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+          lamR.value = WAVE.lambda;
+          vLam.textContent = WAVE.lambda.toFixed(0) + " px";
+          fqR.value = WAVE.freq;
+          vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+          gamR.value = WAVE.gamma;
+          vGam.textContent = WAVE.gamma.toFixed(2);
+
+          ratioR.value = PLUCK.ratio;
+          vRatio.textContent = PLUCK.ratio.toFixed(3);
+          delayR.value = PLUCK.delayMs;
+          vDelay.textContent = PLUCK.delayMs + " ms";
+
+          speedCapR.value = SPEEDBIND.capPx;
+          vSCap.textContent = SPEEDBIND.capPx + " px/s";
+          speedEffR.value = SPEEDBIND.effect;
+          vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+          vMS.textContent = "0 px/s";
+          updateGapReadout();
+        }
+
+        // slider 回调
+        sizeR.oninput = () => {
+          CFG.size = snap05(+sizeR.value);
+          vSize.textContent = CFG.size.toFixed(1) + " px";
+          syncStatics();
+          updateGapReadout();
+          persist();
+        };
+        radR.oninput = () => {
+          CFG.corner = snap05(+radR.value);
+          vRad.textContent = CFG.corner.toFixed(1) + " px";
+          syncStatics();
+          persist();
+        };
+        aaR.oninput = () => {
+          CFG.aa = +aaR.value;
+          vAA.textContent = CFG.aa.toFixed(2) + " px";
+          syncStatics();
+          persist();
+        };
+        gapXR.oninput = () => {
+          GAP.x = snap05(+gapXR.value);
+          vGapX.textContent = GAP.x.toFixed(1) + " px";
+          CELL.stepX = snap05(Math.max(2, 2 * CFG.size + GAP.x));
+          syncStatics();
+          updateGapReadout();
+          persist();
+        };
+        gapYR.oninput = () => {
+          GAP.y = snap05(+gapYR.value);
+          vGapY.textContent = GAP.y.toFixed(1) + " px";
+          CELL.stepY = snap05(Math.max(2, 1 * CFG.size + GAP.y));
+          syncStatics();
+          updateGapReadout();
+          persist();
+        };
+        spdR.oninput = () => {
+          CFG.pulseSpeedHz = +spdR.value;
+          vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
+          applyPulseUniforms();
+          persist();
+        };
+        crR.oninput = () => {
+          CFG.connectRange = +crR.value;
+          vCR.textContent = CFG.connectRange.toFixed(1) + " px";
+          gl.useProgram(progMain);
+          gl.uniform1f(
+            uM.u_falloff,
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
+          );
+          persist();
+        };
+        thR.oninput = () => {
+          CFG.threshold = +thR.value;
+          vTh.textContent = CFG.threshold.toFixed(2);
+          gl.useProgram(progMain);
+          gl.uniform1f(uM.u_thresh, CFG.threshold);
+          persist();
+        };
+        phiAAR.oninput = () => {
+          CFG.phiAA = +phiAAR.value;
+          vPhiAA.textContent = CFG.phiAA.toFixed(2);
+          gl.useProgram(progMain);
+          gl.uniform1f(uM.u_phiAA, CFG.phiAA);
+          persist();
+        };
+        cbiasR.oninput = () => {
+          CFG.cornerBias = +cbiasR.value;
+          vCBias.textContent = CFG.cornerBias.toFixed(2);
+          gl.useProgram(progMain);
+          gl.uniform1f(uM.u_cornerBias, CFG.cornerBias);
+          persist();
+        };
+        sigR.oninput = () => {
+          WAVE.sigma = +sigR.value;
+          vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+          persist();
+        };
+        lamR.oninput = () => {
+          WAVE.lambda = +lamR.value;
+          vLam.textContent = WAVE.lambda.toFixed(0) + " px";
+          persist();
+        };
+        fqR.oninput = () => {
+          WAVE.freq = +fqR.value;
+          vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+          gl.useProgram(progMain);
+          gl.uniform1f(uM.u_freq, WAVE.freq);
+          persist();
+        };
+        gamR.oninput = () => {
+          WAVE.gamma = +gamR.value;
+          vGam.textContent = WAVE.gamma.toFixed(2);
+          persist();
+        };
+        ratioR.oninput = () => {
+          PLUCK.ratio = +ratioR.value;
+          vRatio.textContent = PLUCK.ratio.toFixed(3);
+          persist();
+        };
+        delayR.oninput = () => {
+          PLUCK.delayMs = +delayR.value;
+          vDelay.textContent = PLUCK.delayMs + " ms";
+          persist();
+        };
+        speedCapR.oninput = () => {
+          SPEEDBIND.capPx = +speedCapR.value;
+          vSCap.textContent = SPEEDBIND.capPx + " px/s";
+          persist();
+        };
+        speedEffR.oninput = () => {
+          SPEEDBIND.effect = +speedEffR.value;
+          vSEff.textContent = SPEEDBIND.effect.toFixed(2);
+          persist();
+        };
+
+        // 速度绑定三态
+        const bAmp = id("bindAmp"),
+          bSig = id("bindSig"),
+          bLam = id("bindLam"),
+          bFq = id("bindFq"),
+          bGam = id("bindGam");
+        function cycleMode(m) {
+          return m === 1 ? 0 : m === 0 ? -1 : 1;
+        }
+        function setBind(btn, sym, mode) {
+          btn.setAttribute("aria-pressed", mode !== 0);
+          btn.textContent = `${sym}↔速：${
+            mode === 1 ? "正比" : mode === 0 ? "关闭" : "反比"
+          }`;
+        }
+        bAmp.onclick = () => {
+          SPEEDBIND.ampMode = cycleMode(SPEEDBIND.ampMode);
+          setBind(bAmp, "amp", SPEEDBIND.ampMode);
+          persist();
+        };
+        bSig.onclick = () => {
+          SPEEDBIND.sigMode = cycleMode(SPEEDBIND.sigMode);
+          setBind(bSig, "σ", SPEEDBIND.sigMode);
+          persist();
+        };
+        bLam.onclick = () => {
+          SPEEDBIND.lamMode = cycleMode(SPEEDBIND.lamMode);
+          setBind(bLam, "λ", SPEEDBIND.lamMode);
+          persist();
+        };
+        bFq.onclick = () => {
+          SPEEDBIND.fqMode = cycleMode(SPEEDBIND.fqMode);
+          setBind(bFq, "f", SPEEDBIND.fqMode);
+          persist();
+        };
+        bGam.onclick = () => {
+          SPEEDBIND.gamMode = cycleMode(SPEEDBIND.gamMode);
+          setBind(bGam, "γ", SPEEDBIND.gamMode);
+          persist();
+        };
+
+        // —— 渲染流程 —— //
+        function syncMainUniforms() {
+          gl.useProgram(progMain);
+          gl.uniform2f(uM.u_res, glCanvas.width, glCanvas.height);
+          gl.uniform2f(uM.u_texSize, fieldW, fieldH);
+          gl.uniform1i(uM.u_field, 0);
+          gl.uniform1f(uM.u_freq, WAVE.freq);
+          gl.uniform1f(uM.u_gamma, WAVE.gamma);
+          syncStatics();
+          applyPulseUniforms();
+        }
+
+        // 衰减一步：fieldA -> fieldB
+        function decayField(dt) {
+          const decay = Math.exp(-Math.max(0, WAVE.gamma) * dt);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fboB);
+          gl.viewport(0, 0, fieldW, fieldH);
+          gl.disable(gl.BLEND);
+          gl.useProgram(progDecay);
+          gl.bindBuffer(gl.ARRAY_BUFFER, fsqrBuf);
+          gl.enableVertexAttribArray(a_pos_fsqr);
+          gl.vertexAttribPointer(a_pos_fsqr, 2, gl.FLOAT, false, 0, 0);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, fieldA);
+          gl.uniform1i(uD.u_prev, 0);
+          gl.uniform1f(uD.u_decay, decay);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+          // swap
+          [fieldA, fieldB] = [fieldB, fieldA];
+          [fboA, fboB] = [fboB, fboA];
+        }
+
+        // 在 fieldA 上盖印一笔
+        function splatAt(x, y, angle, t, ampPx, sigmaPx) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fboA);
+          gl.viewport(0, 0, fieldW, fieldH);
+          // 仅在小矩形内绘制，减负载
+          const R = Math.ceil(sigmaPx * 3);
+          const sx = Math.max(0, Math.floor(x - R));
+          const sy = Math.max(0, Math.floor(y - R)); // ✅ 底部为 0 的坐标系，直接用 y
+          const sw = Math.min(fieldW - sx, 2 * R);
+          const sh = Math.min(fieldH - sy, 2 * R);
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(sx, sy, sw, sh);
+
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.ONE, gl.ONE); // 累加
+          gl.useProgram(progSplat);
+          gl.bindBuffer(gl.ARRAY_BUFFER, bigtri);
+          gl.enableVertexAttribArray(a_pos_splat);
+          gl.vertexAttribPointer(a_pos_splat, 2, gl.FLOAT, false, 0, 0);
+
+          gl.uniform2f(uS.u_res, fieldW, fieldH);
+          gl.uniform2f(uS.u_center, x, y);
+          gl.uniform1f(uS.u_sigma, sigmaPx);
+          gl.uniform1f(uS.u_amp, ampPx);
+          gl.uniform2f(uS.u_dir, Math.cos(angle), Math.sin(angle));
+          gl.uniform1f(uS.u_t, t);
+          gl.uniform1f(uS.u_freq, WAVE.freq);
+
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+          gl.disable(gl.BLEND);
+          gl.disable(gl.SCISSOR_TEST);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+
+        // —— 速度映射 —— //
+        let instSpeed = 0,
+          smoothSpeed = 0;
+        function mapBySpeed(base, mode) {
+          if (mode === 0) return base;
+          const s = Math.max(
+            0,
+            Math.min(1, smoothSpeed / Math.max(1, SPEEDBIND.capPx))
+          );
+          const g = 1 + s * SPEEDBIND.effect;
+          return mode === 1 ? base * g : base / g;
+        }
+
+        // —— 路径均匀撒点 —— //
+        const mouse = { prevX: 0, prevY: 0, tPrev: 0 };
+        let emitResidue = 0;
+        const MAX_SUBTAPS_PER_MOVE = 24;
+        addEventListener(
+          "pointermove",
+          (e) => {
+            const rect = glCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * DPR,
+              y = (rect.bottom - e.clientY) * DPR;
+            const now = performance.now() * 0.001,
+              dt = Math.max(1e-3, now - mouse.tPrev);
+            const vx = (x - mouse.prevX) / dt,
+              vy = (y - mouse.prevY) / dt;
+            instSpeed = Math.hypot(vx, vy);
+            smoothSpeed = 0.25 * instSpeed + 0.75 * smoothSpeed;
+            vMS.textContent = Math.round(smoothSpeed) + " px/s";
+
+            if (pluckOn) {
+              const ampPx = Math.min(
+                AMP_CAP,
+                instSpeed * mapBySpeed(PLUCK.ratio, SPEEDBIND.ampMode)
+              );
+              const gain01 = ampPx / AMP_CAP;
+              const angle = Math.atan2(vy, vx);
+
+              const sigmaPx = mapBySpeed(WAVE.sigma, SPEEDBIND.sigMode) * DPR;
+              const lambdaPx = mapBySpeed(WAVE.lambda, SPEEDBIND.lamMode) * DPR;
+              const sEmit = Math.max(
+                4,
+                Math.min(0.25 * lambdaPx, 0.6 * sigmaPx)
+              );
+
+              const x0 = mouse.prevX,
+                y0 = mouse.prevY;
+              const segLen = Math.hypot(x - x0, y - y0);
+              let need = Math.floor((emitResidue + segLen) / sEmit);
+              if (need > MAX_SUBTAPS_PER_MOVE) need = MAX_SUBTAPS_PER_MOVE;
+
+              if (segLen > 1e-4 && need > 0) {
+                const dirx = (x - x0) / segLen,
+                  diry = (y - y0) / segLen;
+                const dtSeg = dt;
+                let dist = sEmit - emitResidue;
+                for (let k = 0; k < need; k++) {
+                  const u = dist / segLen;
+                  const xi = x0 + dirx * dist;
+                  const yi = y0 + diry * dist;
+                  const ti = mouse.tPrev + u * dtSeg;
+                  // 直接盖印（不存 tap）：复振幅写入，后续自然振荡+衰减
+                  splatAt(xi, yi, angle, ti, AMP_CAP * gain01, sigmaPx);
+                  dist += sEmit;
+                }
+                emitResidue = Math.max(0, emitResidue + segLen - need * sEmit);
+              } else {
+                // 兜底（极慢/节流）
+                if (now - mouse.tPrev > 0.06) {
+                  splatAt(x, y, angle, now, AMP_CAP * gain01, sigmaPx);
+                }
+                emitResidue = Math.min(emitResidue + segLen, sEmit);
+              }
+            }
+
+            mouse.prevX = x;
+            mouse.prevY = y;
+            mouse.tPrev = now;
+          },
+          { passive: true }
+        );
+
+        addEventListener(
+          "pointerdown",
+          (e) => {
+            const rect = glCanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * DPR,
+              y = (rect.bottom - e.clientY) * DPR;
+            const now = performance.now() * 0.001;
+            const sigmaPx = mapBySpeed(WAVE.sigma, SPEEDBIND.sigMode) * DPR;
+            splatAt(x, y, 0.0, now, AMP_CAP * 0.5, sigmaPx);
+            mouse.prevX = x;
+            mouse.prevY = y;
+            mouse.tPrev = now;
+          },
+          { passive: true }
+        );
+
+        // —— 主循环 —— //
+        let t0 = performance.now() * 0.001;
+        function frame() {
+          const t = performance.now() * 0.001;
+          const dt = t - t0;
+          t0 = t;
+
+          // 场衰减
+          decayField(dt);
+
+          // 画主屏
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+          gl.clearColor(0, 0, 0, 1);
+          gl.clear(gl.COLOR_BUFFER_BIT);
+          gl.useProgram(progMain);
+          gl.uniform1f(uM.u_time, t);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, fieldA);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, bigtri);
+          gl.enableVertexAttribArray(a_pos_main);
+          gl.vertexAttribPointer(a_pos_main, 2, gl.FLOAT, false, 0, 0);
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+          requestAnimationFrame(frame);
+        }
+
+        // —— 启动 —— //
+        function start() {
+          const w = Math.floor(innerWidth * DPR),
+            h = Math.floor(innerHeight * DPR);
+          glCanvas.width = w;
+          glCanvas.height = h;
+          glCanvas.style.width = innerWidth + "px";
+          glCanvas.style.height = innerHeight + "px";
+          initField();
+          gl.useProgram(progMain);
+          gl.uniform2f(uM.u_res, w, h);
+          gl.uniform2f(uM.u_texSize, fieldW, fieldH);
+          gl.uniform1i(uM.u_field, 0);
+          syncMainUniforms();
+          initSliders();
+          refreshButtons();
+          frame();
+        }
+
+        start();
+
+        // —— 简版 Canvas2D 回退（略） —— //
+        function startFallback() {
+          /* 可复用你旧版回退实现 */
+        }
+      })();
+    </script>
+  </body>
+</html>
