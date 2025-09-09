@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>满屏粘连方块 · 位移场纹理 + 振子积分（修正“黑洞式”核）</title>
+<style>
+  html,body{height:100%;margin:0;background:#0b0f14}
+  #gl{position:fixed;inset:0;display:block;width:100%;height:100%}
+  .ui{position:fixed;left:16px;top:16px;bottom:16px;width:max(260px,22vw);display:flex;flex-direction:column;gap:12px;z-index:10;background:#0f141b;border:1px solid #2a3340;border-radius:12px;padding:12px;overflow:auto}
+  .row{display:flex;flex-direction:column;gap:6px}
+  .h{margin:0;font:700 12px/1 ui-sans-serif,system-ui;color:#cdd6f4;opacity:.8}
+  .label{display:flex;justify-content:space-between;align-items:center;font:12px/1 ui-sans-serif,system-ui;color:#cdd6f4}
+  .val{color:#e6eefc;font-weight:700;margin-left:8px;min-width:84px;text-align:right}
+  input[type=range]{width:100%}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div class="ui" id="panel">
+  <div class="row">
+    <h3 class="h">方块</h3>
+    <div class="label">尺寸 <span id="vSize" class="val"></span></div>
+    <input id="sizeRange" type="range" min="4" max="200" step="0.5"/>
+    <div class="label">圆角(px) <span id="vRadius" class="val"></span></div>
+    <input id="radiusRange" type="range" min="0" max="100" step="0.5"/>
+    <div class="label">圆角AA(px) <span id="vAA" class="val"></span></div>
+    <input id="aaRange" type="range" min="0" max="4" step="0.05"/>
+  </div>
+
+  <div class="row">
+    <h3 class="h">间距（边到边，可为负）</h3>
+    <div class="label">水平 ΔX <span id="vGapX" class="val"></span></div>
+    <input id="gapXRange" type="range" min="-200" max="200" step="0.5"/>
+    <div class="label">垂直 ΔY <span id="vGapY" class="val"></span></div>
+    <input id="gapYRange" type="range" min="-200" max="200" step="0.5"/>
+    <div class="label">实际 X/Y <span id="vGapReal" class="val"></span></div>
+  </div>
+
+  <div class="row">
+    <h3 class="h">粘连/阈值</h3>
+    <div class="label">连接范围 <span id="vCR" class="val"></span></div>
+    <input id="crRange" type="range" min="0" max="12" step="0.1"/>
+    <div class="label">阈值 <span id="vTh" class="val"></span></div>
+    <input id="thRange" type="range" min="0.1" max="4" step="0.01"/>
+    <div class="label">φ-AA <span id="vPhiAA" class="val"></span></div>
+    <input id="phiAARange" type="range" min="0.0" max="1.5" step="0.01"/>
+    <div class="label">角偏置 <span id="vCBias" class="val"></span></div>
+    <input id="cbiasRange" type="range" min="0.2" max="2.5" step="0.01"/>
+  </div>
+
+  <div class="row">
+    <h3 class="h">脉冲</h3>
+    <div class="label">速度→强度比例 <span id="vRatio" class="val"></span></div>
+    <input id="ratioRange" type="range" min="0" max="0.1" step="0.001"/>
+    <div class="label">σ（半径） <span id="vSig" class="val"></span></div>
+    <input id="sigRange" type="range" min="6" max="400" step="1"/>
+    <div class="label">λ（环距） <span id="vLam" class="val"></span></div>
+    <input id="lamRange" type="range" min="20" max="800" step="1"/>
+    <div class="label">amp（基幅） <span id="vAmp" class="val"></span></div>
+    <input id="ampRange" type="range" min="2" max="80" step="1"/>
+    <div class="label">路径投放间距 Δs <span id="vDrop" class="val"></span></div>
+    <input id="dropDistRange" type="range" min="2" max="80" step="1"/>
+  </div>
+
+  <div class="row">
+    <h3 class="h">回弹（振子）</h3>
+    <div class="label">f(Hz) <span id="vFq" class="val"></span></div>
+    <input id="fqRange" type="range" min="0.2" max="6" step="0.01"/>
+    <div class="label">阻尼 γ <span id="vGam" class="val"></span></div>
+    <input id="gamRange" type="range" min="0.3" max="5" step="0.01"/>
+    <div class="label">位移软上限(px) <span id="vCap" class="val"></span></div>
+    <input id="capRange" type="range" min="20" max="320" step="1"/>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+(()=>{
+  // ===== DPR 冻结（页面缩放不改变视觉尺寸） =====
+  const DPR0 = Math.min(2, window.devicePixelRatio || 1);
+  let DPR_CUR = DPR0;
+  const snap05 = v=>Math.round(v*2)/2;
+  const clamp  = (v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+
+  // ===== 参数 =====
+  const CFG = { size:24, corner:8, aa:1.0, connectRange:2.0, threshold:1.0, phiAA:0.20, cornerBias:1.00 };
+  const GAP = { x:8, y:8 };
+  const CELL= { stepX: snap05(2*CFG.size + GAP.x), stepY: snap05(1*CFG.size + GAP.y) };
+
+  const PULSE = { ratio:0.001, sigma:48, lambda:120, amp:28, dropDist:26 }; // 调大 σ/λ 更像“黑洞”团块
+  const AMP_CAP = 24;
+  const OSC   = { freq:3.2, gamma:1.35 }; // 立即回弹感
+  const LIMIT = { dispCap:160 };
+
+  // ===== three.js WebGL2 =====
+  const canvas = document.getElementById('gl');
+  const gl2 = canvas.getContext('webgl2', {alpha:false, antialias:false, premultipliedAlpha:false});
+  if(!gl2){ alert('需要 WebGL2'); return; }
+  const extCBF = gl2.getExtension('EXT_color_buffer_float');
+  if(!extCBF){ console.warn('缺少 EXT_color_buffer_float：某些设备可能无法渲染到 Float 纹理'); }
+
+  const renderer = new THREE.WebGLRenderer({ canvas, context: gl2, antialias:false, alpha:false, premultipliedAlpha:false });
+  renderer.setPixelRatio(1);
+  renderer.setClearColor(0x000000, 1);
+
+  const scene = new THREE.Scene();
+  const camera= new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+
+  // 全屏三角
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1,-1,0, 3,-1,0, -1,3,0]),3));
+
+  // 位移场 RT
+  let RT_A, RT_B;
+  function makeRT(w,h){
+    return new THREE.WebGLRenderTarget(w,h,{
+      type: THREE.FloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer:false, stencilBuffer:false
+    });
+  }
+
+  // 本帧脉冲输入（1×N）
+  const MAX_INPUTS = 128;
+  let inputsCount = 0;
+  const inputsArray = new Float32Array(MAX_INPUTS * 4);
+  const inputsTex = new THREE.DataTexture(inputsArray, MAX_INPUTS, 1, THREE.RGBAFormat, THREE.FloatType);
+  inputsTex.needsUpdate = true;
+  inputsTex.minFilter = THREE.NearestFilter;
+  inputsTex.magFilter = THREE.NearestFilter;
+
+  // ===== 模拟 pass（核：高斯 * 少量 cos(r/λ)，更接近原视觉） =====
+  const simMat = new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader: `
+      in vec3 position; void main(){ gl_Position = vec4(position,1.0); }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform sampler2D u_prev;
+      uniform sampler2D u_inputs;
+      uniform int   u_inCount;
+      uniform vec2  u_res;
+      uniform float u_dt;
+      uniform float u_sigma;
+      uniform float u_lambda;
+      uniform float u_amp;
+      uniform float u_omega;   // 2*pi*f
+      uniform float u_zeta;    // 阻尼比，gamma = zeta*omega
+      out vec4 fragColor;
+
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res;
+        vec4 st = texture(u_prev, uv);
+        vec2 D = st.xy;  // 位移
+        vec2 V = st.zw;  // 速度
+
+        // 注入本帧脉冲：dir * amp * G(r) * (0.75 + 0.25*cos(r/λ))
+        vec2 p = gl_FragCoord.xy;
+        vec2 impulse = vec2(0.0);
+        for(int i=0;i<${MAX_INPUTS};i++){
+          if(i>=u_inCount) break;
+          vec4 q = texelFetch(u_inputs, ivec2(i,0), 0); // (x,y,angle,gain)
+          vec2 c = q.xy;
+          float ang = q.z;
+          float gain = q.w;
+          vec2 d = p - c;
+          float r = length(d);
+          float g = exp(-0.5 * pow(r / max(1.0,u_sigma), 2.0));
+          float ring = 0.75 + 0.25 * cos(r / max(1.0,u_lambda));
+          vec2 dir = vec2(cos(ang), sin(ang));
+          impulse += dir * (u_amp * gain) * (g * ring);
+        }
+
+        // 阻尼振子
+        float w = u_omega;
+        float z = u_zeta;
+        vec2 a = - (w*w) * D - (2.0*z*w) * V + impulse;
+        V += u_dt * a;
+        D += u_dt * V;
+
+        fragColor = vec4(D, V);
+      }
+    `
+  });
+  const simQuad = new THREE.Mesh(geo, simMat);
+  const simScene = new THREE.Scene(); simScene.add(simQuad);
+
+  // ===== 渲染 pass（扭曲 + SDF 方块 + 粘连） =====
+  const drawMat = new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader: `in vec3 position; void main(){ gl_Position = vec4(position,1.0); }`,
+    fragmentShader: `
+      precision highp float;
+      uniform sampler2D u_state;
+      uniform vec2  u_res;
+      uniform vec2  u_half0;
+      uniform vec4  u_radius4;
+      uniform vec2  u_step;
+      uniform float u_aa;
+      uniform float u_thresh, u_falloff;
+      uniform float u_phiAA, u_cornerBias;
+      uniform float u_dispCap, u_dispSoft;
+      out vec4 fragColor;
+
+      float sdRoundBoxCorners(vec2 p, vec2 b, vec4 r4){
+        vec2 s = sign(p);
+        float r = (s.x>0.0) ? ((s.y>0.0)? r4.x : r4.w) : ((s.y>0.0)? r4.y : r4.z);
+        r = clamp(r, 0.0, min(b.x,b.y)-1.0);
+        vec2 q = abs(p) - (b - vec2(r));
+        return length(max(q, vec2(0.0))) - r;
+      }
+      float cornerMask(vec2 p, vec2 b, vec4 r4){
+        float rr = min(min(r4.x,r4.y), min(r4.z,r4.w));
+        vec2 q = abs(p) - (b - vec2(rr));
+        float cx = step(0.0, q.x), cy = step(0.0, q.y);
+        return cx * cy;
+      }
+
+      void main(){
+        vec2 pix = gl_FragCoord.xy;
+        vec2 disp = texture(u_state, pix / u_res).xy;
+
+        // 位移软饱和
+        float cap = max(u_dispCap, 1.0);
+        float soft = max(u_dispSoft, 1.0);
+        float L = length(disp);
+        if(L > 1e-3){
+          float over = max(0.0, L - cap);
+          float L_soft = cap + soft * (1.0 - exp(-over / soft));
+          disp *= (L_soft / L);
+        }
+
+        vec2 uv2 = pix - disp;
+        vec2 C = u_res * 0.5;
+
+        float dmin = 1e6; float insideF = 0.0; float phi = 0.0;
+        float jBase = floor((uv2.y - C.y) / u_step.y + 0.5);
+        for(int jy=-1;jy<=1;jy++){
+          float j = jBase + float(jy);
+          float rowOff = mod(abs(j), 2.0) * 0.5;
+          float iBase = floor((uv2.x - C.x - rowOff*u_step.x) / u_step.x + 0.5);
+          for(int ix=-1; ix<=1; ix++){
+            float i = iBase + float(ix);
+            vec2 center = vec2(C.x + (i + rowOff) * u_step.x, C.y + j * u_step.y);
+
+            vec2 hSize  = u_half0;
+            vec4 r4     = u_radius4;
+
+            vec2 lp = uv2 - center;
+            float d = sdRoundBoxCorners(lp, hSize, r4);
+            dmin = min(dmin, d);
+            if(d <= 0.0) insideF = 1.0;
+
+            float w = mix(1.0, u_cornerBias, cornerMask(lp, hSize, r4));
+            phi += w * exp(-u_falloff * max(d, 0.0));
+          }
+        }
+
+        float wAA = max(u_phiAA, 0.0001);
+        float connected = smoothstep(u_thresh - wAA, u_thresh + wAA, phi);
+        float edge = clamp(1.0 - smoothstep(0.0, u_aa, dmin), 0.0, 1.0);
+        float mask = (insideF > 0.5) ? 1.0 : connected;
+        mask = max(mask, edge * 0.95);
+        fragColor = vec4(vec3(mask), 1.0);
+      }
+    `
+  });
+  const drawQuad = new THREE.Mesh(geo, drawMat); scene.add(drawQuad);
+
+  // ===== 同步静态参数（DPR 冻结） =====
+  function syncStatics(){
+    const halfPx = Math.round((snap05(CFG.size)*DPR0)/2);
+    drawMat.uniforms.u_half0 = { value: new THREE.Vector2(halfPx,halfPx) };
+    const r = snap05(CFG.corner);
+    drawMat.uniforms.u_radius4 = { value: new THREE.Vector4(r*DPR0,r*DPR0,r*DPR0,r*DPR0) };
+    drawMat.uniforms.u_aa = { value: Math.max(0, CFG.aa*DPR0) };
+    drawMat.uniforms.u_thresh = { value: CFG.threshold };
+    drawMat.uniforms.u_falloff= { value: Math.log(2.0)/(Math.max(1e-3, CFG.connectRange)*DPR0) };
+    drawMat.uniforms.u_phiAA  = { value: CFG.phiAA };
+    drawMat.uniforms.u_cornerBias = { value: CFG.cornerBias };
+
+    const sx = Math.round(Math.max(2, snap05(CELL.stepX)*DPR0));
+    const sy = Math.round(Math.max(2, snap05(CELL.stepY)*DPR0));
+    drawMat.uniforms.u_step = { value: new THREE.Vector2(sx,sy) };
+
+    drawMat.uniforms.u_dispCap  = { value: LIMIT.dispCap * DPR0 };
+    drawMat.uniforms.u_dispSoft = { value: LIMIT.dispCap * 2.0 * DPR0 };
+  }
+
+  function resize(){
+    DPR_CUR = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.floor(innerWidth * DPR_CUR), h = Math.floor(innerHeight * DPR_CUR);
+    renderer.setSize(w,h,false);
+    canvas.style.width = innerWidth+'px';
+    canvas.style.height= innerHeight+'px';
+
+    RT_A?.dispose(); RT_B?.dispose();
+    RT_A = makeRT(w,h);
+    RT_B = makeRT(w,h);
+
+    // 清零 RT，避免未定义值
+    renderer.setRenderTarget(RT_A); renderer.clearColor();
+    renderer.setRenderTarget(RT_B); renderer.clearColor();
+    renderer.setRenderTarget(null);
+
+    simMat.uniforms = {
+      u_prev:{ value: RT_A.texture },
+      u_inputs:{ value: inputsTex },
+      u_inCount:{ value: 0 },
+      u_res:{ value: new THREE.Vector2(w,h) },
+      u_dt:{ value: 0.016 },
+      u_sigma:{ value: PULSE.sigma * DPR0 },
+      u_lambda:{ value: Math.max(1.0, PULSE.lambda) * DPR0 },
+      u_amp:{ value: PULSE.amp },
+      u_omega:{ value: 2.0*Math.PI*OSC.freq },
+      u_zeta:{ value: clamp(OSC.gamma / Math.max(1e-3, 2.0*Math.PI*OSC.freq), 0.0, 5.0) }
+    };
+
+    drawMat.uniforms.u_state = { value: RT_A.texture };
+    drawMat.uniforms.u_res   = { value: new THREE.Vector2(w,h) };
+  }
+  window.addEventListener('resize', resize);
+
+  // ===== UI =====
+  const ui = id=>document.getElementById(id);
+  const vSize=ui('vSize'), vRadius=ui('vRadius'), vAA=ui('vAA');
+  const vGapX=ui('vGapX'), vGapY=ui('vGapY'), vGapReal=ui('vGapReal');
+  const vCR=ui('vCR'), vTh=ui('vTh'), vPhiAA=ui('vPhiAA'), vCBias=ui('vCBias');
+  const vRatio=ui('vRatio'), vSig=ui('vSig'), vLam=ui('vLam'), vAmp=ui('vAmp'), vDrop=ui('vDrop');
+  const vFq=ui('vFq'), vGam=ui('vGam'), vCap=ui('vCap');
+
+  function updateGapReadout(){
+    const gx=snap05(CELL.stepX - 2*CFG.size), gy=snap05(CELL.stepY - 1*CFG.size);
+    vGapReal.textContent = `${gx.toFixed(1)} / ${gy.toFixed(1)} px`;
+  }
+  function initUI(){
+    const sizeR=ui('sizeRange'), radiusR=ui('radiusRange'), aaR=ui('aaRange');
+    sizeR.value=CFG.size; radiusR.value=CFG.corner; aaR.value=CFG.aa;
+    vSize.textContent=CFG.size+' px'; vRadius.textContent=CFG.corner+' px'; vAA.textContent=CFG.aa.toFixed(2)+' px';
+    sizeR.oninput=()=>{ CFG.size=+sizeR.value; vSize.textContent=CFG.size+' px'; syncStatics(); updateGapReadout(); };
+    radiusR.oninput=()=>{ CFG.corner=+radiusR.value; vRadius.textContent=CFG.corner+' px'; syncStatics(); };
+    aaR.oninput=()=>{ CFG.aa=+aaR.value; vAA.textContent=CFG.aa.toFixed(2)+' px'; syncStatics(); };
+
+    const gxR=ui('gapXRange'), gyR=ui('gapYRange');
+    gxR.value=GAP.x; gyR.value=GAP.y;
+    vGapX.textContent=GAP.x+' px'; vGapY.textContent=GAP.y+' px';
+    gxR.oninput=()=>{ GAP.x=+gxR.value; vGapX.textContent=GAP.x+' px'; CELL.stepX=snap05(Math.max(2,2*CFG.size+GAP.x)); syncStatics(); updateGapReadout(); };
+    gyR.oninput=()=>{ GAP.y=+gyR.value; vGapY.textContent=GAP.y+' px'; CELL.stepY=snap05(Math.max(2,1*CFG.size+GAP.y)); syncStatics(); updateGapReadout(); };
+    updateGapReadout();
+
+    const crR=ui('crRange'), thR=ui('thRange'), phiAAR=ui('phiAARange'), cbiasR=ui('cbiasRange');
+    crR.value=CFG.connectRange; thR.value=CFG.threshold; phiAAR.value=CFG.phiAA; cbiasR.value=CFG.cornerBias;
+    vCR.textContent=CFG.connectRange.toFixed(1)+' px'; vTh.textContent=CFG.threshold.toFixed(2);
+    vPhiAA.textContent=CFG.phiAA.toFixed(2); vCBias.textContent=CFG.cornerBias.toFixed(2);
+    crR.oninput=()=>{ CFG.connectRange=+crR.value; vCR.textContent=CFG.connectRange.toFixed(1)+' px'; drawMat.uniforms.u_falloff.value = Math.log(2.0)/(Math.max(1e-3, CFG.connectRange)*DPR0); };
+    thR.oninput=()=>{ CFG.threshold=+thR.value; vTh.textContent=CFG.threshold.toFixed(2); drawMat.uniforms.u_thresh.value=CFG.threshold; };
+    phiAAR.oninput=()=>{ CFG.phiAA=+phiAAR.value; vPhiAA.textContent=CFG.phiAA.toFixed(2); drawMat.uniforms.u_phiAA.value=CFG.phiAA; };
+    cbiasR.oninput=()=>{ CFG.cornerBias=+cbiasR.value; vCBias.textContent=CFG.cornerBias.toFixed(2); drawMat.uniforms.u_cornerBias.value=CFG.cornerBias; };
+
+    const ratioR=ui('ratioRange'), sigR=ui('sigRange'), lamR=ui('lamRange'), ampR=ui('ampRange'), dropR=ui('dropDistRange');
+    ratioR.value=PULSE.ratio; sigR.value=PULSE.sigma; lamR.value=PULSE.lambda; ampR.value=PULSE.amp; dropR.value=PULSE.dropDist;
+    vRatio.textContent=PULSE.ratio.toFixed(3); vSig.textContent=PULSE.sigma+' px'; vLam.textContent=PULSE.lambda+' px'; vAmp.textContent=PULSE.amp.toFixed(0); vDrop.textContent=PULSE.dropDist+' px';
+    ratioR.oninput=()=>{ PULSE.ratio=+ratioR.value; vRatio.textContent=PULSE.ratio.toFixed(3); };
+    sigR.oninput  =()=>{ PULSE.sigma=+sigR.value; vSig.textContent=PULSE.sigma+' px'; simMat.uniforms.u_sigma.value=PULSE.sigma*DPR0; };
+    lamR.oninput  =()=>{ PULSE.lambda=+lamR.value; vLam.textContent=PULSE.lambda+' px'; simMat.uniforms.u_lambda.value=Math.max(1.0,PULSE.lambda)*DPR0; };
+    ampR.oninput  =()=>{ PULSE.amp=+ampR.value; vAmp.textContent=PULSE.amp.toFixed(0); simMat.uniforms.u_amp.value=PULSE.amp; };
+    dropR.oninput =()=>{ PULSE.dropDist=+dropR.value; vDrop.textContent=PULSE.dropDist+' px'; };
+
+    const fqR=ui('fqRange'), gamR=ui('gamRange'), capR=ui('capRange');
+    fqR.value=OSC.freq; gamR.value=OSC.gamma; capR.value=LIMIT.dispCap;
+    vFq.textContent=OSC.freq.toFixed(2)+' Hz'; vGam.textContent=OSC.gamma.toFixed(2); vCap.textContent=LIMIT.dispCap+' px';
+    fqR.oninput =()=>{ OSC.freq=+fqR.value; vFq.textContent=OSC.freq.toFixed(2)+' Hz'; simMat.uniforms.u_omega.value = 2.0*Math.PI*OSC.freq; simMat.uniforms.u_zeta.value = clamp(OSC.gamma/Math.max(1e-3, 2.0*Math.PI*OSC.freq), 0.0, 5.0); };
+    gamR.oninput=()=>{ OSC.gamma=+gamR.value; vGam.textContent=OSC.gamma.toFixed(2); simMat.uniforms.u_zeta.value = clamp(OSC.gamma/Math.max(1e-3, 2.0*Math.PI*OSC.freq), 0.0, 5.0); };
+    capR.oninput=()=>{ LIMIT.dispCap=+capR.value; vCap.textContent=LIMIT.dispCap+' px'; drawMat.uniforms.u_dispCap.value = LIMIT.dispCap * DPR0; drawMat.uniforms.u_dispSoft.value = LIMIT.dispCap*2.0 * DPR0; };
+  }
+
+  // 路径等距撒点（一帧最多 MAX_INPUTS 个）
+  const mouse = { prevX:0, prevY:0, tPrev:0 };
+  let emitResidue = 0, instSpeed=0, smoothSpeed=0;
+
+  window.addEventListener('pointermove', (e)=>{
+    const rect=canvas.getBoundingClientRect();
+    const x=(e.clientX-rect.left)*DPR_CUR, y=(rect.bottom-e.clientY)*DPR_CUR;
+    const now=performance.now()*0.001, dt=Math.max(1e-3, now - mouse.tPrev);
+    const dx=x - mouse.prevX, dy=y - mouse.prevY;
+    const segLen = Math.hypot(dx,dy);
+    instSpeed = segLen / dt; smoothSpeed = 0.25*instSpeed + 0.75*smoothSpeed;
+
+    const sEmit = Math.max(2, PULSE.dropDist * DPR_CUR);
+    let need = Math.floor((emitResidue + segLen) / sEmit);
+    if(need>MAX_INPUTS) need = MAX_INPUTS;
+
+    if(segLen>1e-4 && need>0){
+      const dirx=dx/segLen, diry=dy/segLen;
+      let dist = sEmit - emitResidue;
+      const angle = Math.atan2(dy,dx);
+      const gain = Math.min(AMP_CAP, instSpeed * PULSE.ratio) / AMP_CAP;
+      inputsCount = 0;
+      for(let k=0;k<need;k++){
+        const xi = mouse.prevX + dirx * dist;
+        const yi = mouse.prevY + diry * dist;
+        const idx = inputsCount*4;
+        inputsArray[idx+0]=xi; inputsArray[idx+1]=yi; inputsArray[idx+2]=angle; inputsArray[idx+3]=gain;
+        inputsCount++;
+        dist += sEmit;
+        if(inputsCount>=MAX_INPUTS) break;
+      }
+      inputsTex.needsUpdate = true;
+      emitResidue = Math.max(0, emitResidue + segLen - need*sEmit);
+    }else{
+      inputsCount = 0; // 本帧无输入
+    }
+
+    mouse.prevX=x; mouse.prevY=y; mouse.tPrev=now;
+  }, {passive:true});
+
+  window.addEventListener('pointerdown', (e)=>{
+    const rect=canvas.getBoundingClientRect();
+    const x=(e.clientX-rect.left)*DPR_CUR, y=(rect.bottom-e.clientY)*DPR_CUR;
+    const now=performance.now()*0.001;
+    mouse.prevX=x; mouse.prevY=y; mouse.tPrev=now;
+    inputsCount=1;
+    inputsArray[0]=x; inputsArray[1]=y; inputsArray[2]=0.0; inputsArray[3]=0.6;
+    inputsTex.needsUpdate=true;
+    emitResidue=0;
+  }, {passive:true});
+
+  // 主循环（先模拟，再渲）
+  let tPrev = performance.now()*0.001;
+  function frame(){
+    const tNow = performance.now()*0.001;
+    let dt = clamp(tNow - tPrev, 0.0, 1/30);
+    tPrev = tNow;
+
+    // 模拟
+    simMat.uniforms.u_prev.value = RT_A.texture;
+    simMat.uniforms.u_dt.value   = dt;
+    simMat.uniforms.u_inCount.value = inputsCount;
+    renderer.setRenderTarget(RT_B);
+    renderer.render(simScene, camera);
+    [RT_A, RT_B] = [RT_B, RT_A];
+
+    // 渲染
+    drawMat.uniforms.u_state.value = RT_A.texture;
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+
+    inputsCount = 0; // 本帧输入作废
+    requestAnimationFrame(frame);
+  }
+
+  // 启动
+  function updateGapReadout(){
+    const gx=snap05(CELL.stepX - 2*CFG.size), gy=snap05(CELL.stepY - 1*CFG.size);
+    document.getElementById('vGapReal').textContent = `${gx.toFixed(1)} / ${gy.toFixed(1)} px`;
+  }
+  function syncStaticsAndUI(){ syncStatics(); initUI(); updateGapReadout(); }
+
+  resize(); syncStaticsAndUI(); frame();
+})();
+</script>
+</body>
+</html>

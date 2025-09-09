@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>满屏粘连方块（路径撒点脉冲｜立即回弹｜分段软饱和｜DPR冻结）</title>
+    <title>满屏粘连方块 · three.js 版（生成即回弹·无尾巴）</title>
     <style>
       html,
       body {
@@ -11,7 +11,7 @@
         margin: 0;
         background: #0b0f14;
       }
-      canvas {
+      #glcanvas {
         position: fixed;
         inset: 0;
         display: block;
@@ -76,26 +76,10 @@
         background: #1b2a40;
         border-color: #314257;
       }
-      .err {
-        position: fixed;
-        left: 16px;
-        bottom: 16px;
-        color: #ffebee;
-        background: #3b1d22;
-        border: 1px solid #6b2a36;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font: 12px/1.4 ui-sans-serif, system-ui;
-        max-width: 70ch;
-        white-space: pre-wrap;
-        z-index: 10;
-        display: none;
-      }
     </style>
   </head>
   <body>
-    <canvas id="gl"></canvas>
-    <canvas id="fallback" style="z-index: -1"></canvas>
+    <canvas id="glcanvas"></canvas>
 
     <div class="ui" id="controls">
       <button id="pulse" class="btn" aria-pressed="false">脉动：关 (P)</button>
@@ -171,11 +155,11 @@
           <button id="bindSig" class="btn" aria-pressed="true">
             σ↔速：正比
           </button>
-          <button id="bindFq" class="btn" aria-pressed="true">
-            f↔速：正比
+          <button id="bindFq" class="btn" aria-pressed="false">
+            f↔速：关闭
           </button>
-          <button id="bindGam" class="btn" aria-pressed="true">
-            γ↔速：正比
+          <button id="bindGam" class="btn" aria-pressed="false">
+            γ↔速：关闭
           </button>
         </div>
         <div class="label">
@@ -200,7 +184,7 @@
         <div class="label">
           位移上限(px) <span id="vCap" class="val"></span>
         </div>
-        <input id="capRange" type="range" min="5" max="160" step="1" />
+        <input id="capRange" type="range" min="5" max="200" step="1" />
         <div class="label">
           复原时长 τ(s) <span id="vLife" class="val"></span>
         </div>
@@ -208,11 +192,10 @@
       </div>
     </div>
 
-    <div id="err" class="err"></div>
-
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <script>
       (() => {
-        // —— 存储 ——（沿用旧 key）
+        // ====== 参数 & 存储 ======
         const STORE = "stickySquares.xyGap.aa.v7";
         const saved = (() => {
           try {
@@ -225,11 +208,10 @@
         const snap05 = (v) => Math.round(v * 2) / 2;
         const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-        // —— DPR 冻结（形状/AA/步长用 DPR0；渲染尺寸与指针用 DPR_CUR）——
+        // DPR 冻结（形状/AA/步长用 DPR0；渲染与指针用 DPR_CUR）
         const DPR0 = Math.min(2, window.devicePixelRatio || 1);
         let DPR_CUR = DPR0;
 
-        // —— 视觉参数 ——
         const CFG = {
           size: snap05(saved?.size ?? 24),
           corner: snap05(saved?.corner ?? 8),
@@ -241,8 +223,6 @@
           phiAA: saved?.phiAA ?? 0.2,
           cornerBias: saved?.cornerBias ?? 1.0,
         };
-
-        // —— 间距 ——
         const GAP = {
           x: snap05(saved?.gapX ?? 8),
           y: snap05(saved?.gapY ?? 8),
@@ -252,38 +232,36 @@
           stepY: snap05(saved?.stepY ?? 1 * CFG.size + GAP.y),
         };
 
-        // —— 波形参数（无尾巴，仅阻尼振动） ——
+        // 波形（路径撒点 & 立即回弹）
         const WAVE = {
           amp: saved?.amp ?? 20,
           sigma: saved?.sigma ?? 30,
-          freq: saved?.freq ?? 1.6,
+          freq: saved?.freq ?? 3.0,
           gamma: saved?.gamma ?? 1.2,
         };
-        const PLUCK = { ratio: saved?.ratio ?? 0.001, speedThreshold: 60 }; // 仅用于幅度按速映射
+        const PLUCK = { ratio: saved?.ratio ?? 0.001, speedThreshold: 60 };
         const AMP_CAP = 20;
 
-        // —— 速度绑定三态 —— //
+        // 速度绑定三态（默认关闭 f/γ 绑定，避免“停下时晚半拍”）
         const SPEEDBIND = {
           capPx: saved?.capPx ?? 1600,
           effect: saved?.effect ?? 1.0,
           ampMode: saved?.ampMode ?? 1,
           sigMode: saved?.sigMode ?? 1,
-          fqMode: saved?.fqMode ?? 1,
-          gamMode: saved?.gamMode ?? 1,
+          fqMode: saved?.fqMode ?? 0,
+          gamMode: saved?.gamMode ?? 0,
         };
 
-        // —— 路径撒点 ——（CSS px）
+        // 路径撒点
         const DROP = { dist: saved?.dropDist ?? 24 };
         const MAX_SUB_PER_MOVE = 24;
 
-        // —— 叠加保护 + 回弹时长 —— //
+        // 叠加保护 + 回弹时长
         const LIMIT = {
-          dispCap: saved?.dispCap ?? 64, // 位移上限阈值（px），≤此值不压缩
-          lifeSec: saved?.lifeSec ?? 2.0, // τ：从1衰到≈1%的时间
+          dispCap: saved?.dispCap ?? 120,
+          lifeSec: saved?.lifeSec ?? 2.0,
         };
-
-        // —— 回弹“立即动起来”的相位混合（cos - k·sin），k>0 使 t=0 即有负向速度 —— //
-        const SINE_MIX = 0.6; // 可改：0.4~0.9 之间更明显
+        const SINE_MIX = 1.2; // 初速度更大，生成即回弹
 
         function persist() {
           localStorage.setItem(
@@ -318,101 +296,42 @@
           );
         }
 
-        // —— WebGL 基础 —— //
-        const glCanvas = document.getElementById("gl");
-        const fbCanvas = document.getElementById("fallback");
-        const errBox = document.getElementById("err");
+        // ====== three.js 场景 ======
+        const canvas = document.getElementById("glcanvas");
+        const renderer = new THREE.WebGLRenderer({
+          canvas,
+          antialias: false,
+          alpha: false,
+          premultipliedAlpha: false,
+        });
+        renderer.setPixelRatio(1); // 我们自己管 DPR
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-        const controls = document.getElementById("controls");
-        [
-          "pointerdown",
-          "pointermove",
-          "pointerup",
-          "wheel",
-          "touchstart",
-          "touchmove",
-          "mousedown",
-          "mousemove",
-          "mouseup",
-        ].forEach((ev) =>
-          controls.addEventListener(
-            ev,
-            (e) => {
-              e.stopPropagation();
-            },
-            { passive: false }
+        // 全屏大三角
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute(
+          "position",
+          new THREE.BufferAttribute(
+            new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]),
+            3
           )
         );
 
-        function showErr(msg) {
-          errBox.style.display = "block";
-          errBox.textContent = msg;
-          fbCanvas.style.zIndex = "1";
-        }
-
-        const gl = glCanvas.getContext("webgl", {
-          antialias: false,
-          alpha: false,
-        });
-        if (!gl) {
-          showErr("未启用 WebGL，已回退 Canvas2D。");
-          return;
-        }
-
-        const hasDeriv = !!gl.getExtension("OES_standard_derivatives");
-
-        const VERT = `
-      attribute vec2 a_pos;
-      void main(){ gl_Position=vec4(a_pos,0.0,1.0); }
-    `;
-
+        // ====== Shader ======
         const MAX_PULSES = 128;
-        function buildFrag() {
-          return `
-${hasDeriv ? "#extension GL_OES_standard_derivatives : enable" : ""}
-#ifdef GL_ES
-  #ifdef GL_FRAGMENT_PRECISION_HIGH
-    precision highp float;
-  #else
-    precision mediump float;
-  #endif
-#else
-  precision highp float;
-#endif
-
-uniform vec2  u_res;
-uniform float u_time;
-
-// 栅格/形状
-uniform vec2  u_half0;
-uniform vec4  u_radius4;
-uniform vec2  u_step;
-uniform float u_pulseMin, u_pulseHz;
-uniform float u_thresh, u_falloff, u_aa;
-
-// 波形参数
+        const frag = `precision highp float;
+uniform vec2  u_res; uniform float u_time;
+uniform vec2  u_half0; uniform vec4  u_radius4; uniform vec2  u_step;
+uniform float u_pulseMin, u_pulseHz; uniform float u_thresh, u_falloff, u_aa;
 uniform float u_amp, u_sigma, u_freq, u_gamma;
-
-// φ-AA + 角偏置
-uniform float u_phiAA;
-uniform float u_cornerBias;
-
-// 路径脉冲
-uniform float u_pCount;
-uniform vec4  u_pulses[${MAX_PULSES}];  // (x,y,t0,angle)
-uniform float u_pGain[${MAX_PULSES}];   // 0..1
-
-// 立即回弹相位混合：cos - k·sin
-uniform float u_sineMix;  // k
-
-// 叠加保护（分段软饱和）
-uniform float u_dispCap;  // 阈值（px）
-uniform float u_dispSoft; // 软段宽度（px）
+uniform float u_phiAA; uniform float u_cornerBias;
+uniform float u_pCount; uniform vec4 u_pulses[${MAX_PULSES}]; uniform float u_pGain[${MAX_PULSES}];
+uniform float u_sineMix; uniform float u_dispCap; uniform float u_dispSoft;
 
 float sdRoundBoxCorners(vec2 p, vec2 b, vec4 r4){
   vec2 s = sign(p);
-  float r = (s.x>0.0) ? ((s.y>0.0)? r4.x : r4.w)
-                      : ((s.y>0.0)? r4.y : r4.z);
+  float r = (s.x>0.0) ? ((s.y>0.0)? r4.x : r4.w) : ((s.y>0.0)? r4.y : r4.z);
   r = clamp(r, 0.0, min(b.x,b.y)-1.0);
   vec2 q = abs(p) - (b - vec2(r));
   return length(max(q, vec2(0.0))) - r;
@@ -423,18 +342,16 @@ float cornerMask(vec2 p, vec2 b, vec4 r4){
   float cx = step(0.0, q.x), cy = step(0.0, q.y);
   return cx * cy;
 }
-
 vec2 displacementFromPulse(vec2 p, vec2 c, float ang, float t0, float gain){
   float age = max(0.0, u_time - t0);
   float r   = length(p - c) + 1e-3;
   float env = exp(-u_gamma * age) * exp(-r / max(1.0, u_sigma));
   float phase = 6.2831853 * u_freq * age;
-  float osc = cos(phase) - u_sineMix * sin(phase); // t=0 即有回弹速度
+  float osc = cos(phase) - u_sineMix * sin(phase);
   float a = (u_amp * gain) * env * osc;
   vec2 dir = vec2(cos(ang), sin(ang));
   return dir * a;
 }
-
 vec2 waveDisplacement(vec2 p){
   vec2 disp = vec2(0.0);
   for(int i=0;i<${MAX_PULSES};i++){
@@ -444,33 +361,27 @@ vec2 waveDisplacement(vec2 p){
   }
   return disp;
 }
-
 void main(){
   vec2 uv = gl_FragCoord.xy;
   vec2 disp = waveDisplacement(uv);
 
-  // 分段软饱和：L <= cap 不动；L > cap 柔和压缩到 [cap, cap+soft)
   float cap = max(u_dispCap, 1.0);
   float soft = max(u_dispSoft, 1.0);
   float L = length(disp);
   if(L > 1e-3){
     float over = max(0.0, L - cap);
-    float w = smoothstep(0.0, soft, over); // 0..1
-    float L_soft = cap + soft * (1.0 - exp(-over / soft)); // 平滑靠近 cap+soft
+    float w = smoothstep(0.0, soft, over);
+    float L_soft = cap + soft * (1.0 - exp(-over / soft));
     float L_new = mix(L, L_soft, w);
     disp *= (L_new / L);
   }
-
   vec2 uv2 = uv - disp;
 
-  // 可选全局脉动
   float phase = 0.5 + 0.5 * sin(6.2831853 * u_pulseHz * u_time);
   float pulse = u_pulseMin + (1.0 - u_pulseMin) * phase;
 
   vec2 C  = u_res * 0.5;
-  float dmin = 1e6;
-  float insideF = 0.0;
-  float phi = 0.0;
+  float dmin = 1e6; float insideF = 0.0; float phi = 0.0;
 
   float jBase = floor((uv2.y - C.y) / u_step.y + 0.5);
   for(int jy=-1;jy<=1;jy++){
@@ -479,155 +390,101 @@ void main(){
     float iBase = floor((uv2.x - C.x - rowOff*u_step.x) / u_step.x + 0.5);
     for(int ix=-1; ix<=1; ix++){
       float i = iBase + float(ix);
-      vec2 center = vec2(C.x + (i + rowOff) * u_step.x,
-                         C.y +  j            * u_step.y);
-
+      vec2 center = vec2(C.x + (i + rowOff) * u_step.x, C.y + j * u_step.y);
       vec2 hSize  = u_half0 * pulse;
       vec4 r4     = u_radius4 * pulse;
-
       vec2 lp = uv2 - center;
-      float d     = sdRoundBoxCorners(lp, hSize, r4);
+      float d = sdRoundBoxCorners(lp, hSize, r4);
       dmin = min(dmin, d);
       if(d <= 0.0) insideF = 1.0;
-
-      float wCorner = cornerMask(lp, hSize, r4);
-      float w = mix(1.0, u_cornerBias, wCorner);
+      float w = mix(1.0, u_cornerBias, cornerMask(lp, hSize, r4));
       phi += w * exp(-u_falloff * max(d, 0.0));
     }
   }
-
   float wAA = max(u_phiAA, 0.0001);
-  ${hasDeriv ? "wAA = max(wAA, fwidth(phi));" : ""}
   float connected = smoothstep(u_thresh - wAA, u_thresh + wAA, phi);
-
   float edge = clamp(1.0 - smoothstep(0.0, u_aa, dmin), 0.0, 1.0);
   float mask = (insideF > 0.5) ? 1.0 : connected;
   mask = max(mask, edge * 0.95);
-
   gl_FragColor = vec4(vec3(mask), 1.0);
 }`;
-        }
-        const FRAG = buildFrag();
+        const vert = `precision highp float; attribute vec3 position; void main(){ gl_Position = vec4(position, 1.0); }`;
 
-        // —— 编译/链接 —— //
-        function compile(type, src) {
-          const s = gl.createShader(type);
-          gl.shaderSource(s, src);
-          gl.compileShader(s);
-          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-            const log = gl.getShaderInfoLog(s) || "(empty log)";
-            gl.deleteShader(s);
-            throw new Error(log);
-          }
-          return s;
-        }
-        let prog;
-        try {
-          prog = gl.createProgram();
-          gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-          gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-          gl.linkProgram(prog);
-          if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
-            throw new Error(gl.getProgramInfoLog(prog));
-        } catch (e) {
-          const err = document.getElementById("err");
-          err.style.display = "block";
-          err.textContent = "WebGL 着色器失败：" + e.message;
-          return;
-        }
-        gl.useProgram(prog);
+        const uniforms = {
+          u_res: { value: new THREE.Vector2(1, 1) },
+          u_time: { value: 0 },
+          u_half0: { value: new THREE.Vector2(12, 12) },
+          u_radius4: { value: new THREE.Vector4(8, 8, 8, 8) },
+          u_step: { value: new THREE.Vector2(64, 32) },
+          u_pulseMin: { value: 1.0 },
+          u_pulseHz: { value: 0.0 },
+          u_thresh: { value: 1.0 },
+          u_falloff: { value: 0.5 },
+          u_aa: { value: 1.0 },
+          u_amp: { value: WAVE.amp },
+          u_sigma: { value: WAVE.sigma * DPR0 },
+          u_freq: { value: WAVE.freq },
+          u_gamma: { value: WAVE.gamma },
+          u_phiAA: { value: CFG.phiAA },
+          u_cornerBias: { value: CFG.cornerBias },
+          u_pCount: { value: 0 },
+          u_pulses: {
+            value: Array.from(
+              { length: MAX_PULSES },
+              () => new THREE.Vector4(0, 0, 0, 0)
+            ),
+          },
+          u_pGain: { value: Array.from({ length: MAX_PULSES }, () => 0) },
+          u_sineMix: { value: SINE_MIX },
+          u_dispCap: { value: LIMIT.dispCap * DPR0 },
+          u_dispSoft: { value: LIMIT.dispCap * 2.0 * DPR0 }, // 放宽软饱和
+          u_phiAA: { value: CFG.phiAA },
+        };
 
-        // 大三角
-        const buf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-        gl.bufferData(
-          gl.ARRAY_BUFFER,
-          new Float32Array([-1, -1, 3, -1, -1, 3]),
-          gl.STATIC_DRAW
-        );
-        const a_pos = gl.getAttribLocation(prog, "a_pos");
-        gl.enableVertexAttribArray(a_pos);
-        gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+        const material = new THREE.RawShaderMaterial({
+          vertexShader: vert,
+          fragmentShader: frag,
+          uniforms,
+          glslVersion: THREE.GLSL1,
+        });
+        const mesh = new THREE.Mesh(geo, material);
+        scene.add(mesh);
 
-        // uniforms
-        const U = (n) => gl.getUniformLocation(prog, n);
-        const u_res = U("u_res"),
-          u_time = U("u_time");
-        const u_half0 = U("u_half0"),
-          u_radius4 = U("u_radius4"),
-          u_step = U("u_step");
-        const u_pulseMin = U("u_pulseMin"),
-          u_pulseHz = U("u_pulseHz");
-        const u_thresh = U("u_thresh"),
-          u_falloff = U("u_falloff"),
-          u_aa = U("u_aa");
-        const u_amp = U("u_amp"),
-          u_sigma = U("u_sigma"),
-          u_freq = U("u_freq"),
-          u_gamma = U("u_gamma");
-        const u_phiAA = U("u_phiAA"),
-          u_cornerBias = U("u_cornerBias");
-
-        const u_pCount = U("u_pCount");
-        const u_pEls = [],
-          u_gEls = [];
-        for (let i = 0; i < MAX_PULSES; i++) {
-          u_pEls.push(U(`u_pulses[${i}]`));
-          u_gEls.push(U(`u_pGain[${i}]`));
-        }
-
-        const u_sineMix = U("u_sineMix");
-        const u_dispCap = U("u_dispCap"),
-          u_dispSoft = U("u_dispSoft");
-
-        function syncGrid() {
-          const sx = Math.round(Math.max(2, CELL.stepX * DPR0));
-          const sy = Math.round(Math.max(2, CELL.stepY * DPR0));
-          gl.uniform2f(u_step, sx, sy);
-        }
-        function applyPulseUniforms() {
-          gl.uniform1f(u_pulseMin, pulseOn ? CFG.pulseMin : 1.0);
-          gl.uniform1f(u_pulseHz, pulseOn ? CFG.pulseSpeedHz : 0.0);
-        }
+        // ====== 尺寸与静态同步 ======
         function syncStatics() {
           const side = snap05(CFG.size);
           const halfPx = Math.round((side * DPR0) / 2);
-          gl.uniform2f(u_half0, halfPx, halfPx);
+          uniforms.u_half0.value.set(halfPx, halfPx);
           const r = snap05(CFG.corner);
-          gl.uniform4f(u_radius4, r * DPR0, r * DPR0, r * DPR0, r * DPR0);
-
-          gl.uniform1f(u_aa, Math.max(0.0, CFG.aa * DPR0));
-          gl.uniform1f(u_thresh, CFG.threshold);
-          gl.uniform1f(
-            u_falloff,
-            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR0)
-          );
-          gl.uniform1f(u_phiAA, CFG.phiAA);
-          gl.uniform1f(u_cornerBias, CFG.cornerBias);
-
-          // 叠加保护：阈值 & 软区（均用 DPR0 尺度）
-          gl.uniform1f(u_dispCap, LIMIT.dispCap * DPR0);
-          gl.uniform1f(u_dispSoft, LIMIT.dispCap * 0.8 * DPR0); // 软段宽度 = 0.8·cap，可改
-
-          gl.uniform1f(u_sineMix, SINE_MIX);
-
-          syncGrid();
-          applyPulseUniforms();
+          uniforms.u_radius4.value.set(r * DPR0, r * DPR0, r * DPR0, r * DPR0);
+          uniforms.u_aa.value = Math.max(0.0, CFG.aa * DPR0);
+          uniforms.u_thresh.value = CFG.threshold;
+          uniforms.u_falloff.value =
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR0);
+          uniforms.u_phiAA.value = CFG.phiAA;
+          uniforms.u_cornerBias.value = CFG.cornerBias;
+          const sx = Math.round(Math.max(2, CELL.stepX * DPR0));
+          const sy = Math.round(Math.max(2, CELL.stepY * DPR0));
+          uniforms.u_step.value.set(sx, sy);
+          uniforms.u_dispCap.value = LIMIT.dispCap * DPR0;
+          uniforms.u_dispSoft.value = LIMIT.dispCap * 2.0 * DPR0; // 放宽
+        }
+        function applyPulseUniforms() {
+          uniforms.u_pulseMin.value = pulseOn ? CFG.pulseMin : 1.0;
+          uniforms.u_pulseHz.value = pulseOn ? CFG.pulseSpeedHz : 0.0;
         }
         function resize() {
           DPR_CUR = Math.min(2, window.devicePixelRatio || 1);
           const w = Math.floor(innerWidth * DPR_CUR),
             h = Math.floor(innerHeight * DPR_CUR);
-          glCanvas.width = w;
-          glCanvas.height = h;
-          glCanvas.style.width = innerWidth + "px";
-          glCanvas.style.height = innerHeight + "px";
-          gl.viewport(0, 0, w, h);
-          gl.uniform2f(u_res, w, h);
+          renderer.setSize(w, h, false);
+          canvas.style.width = innerWidth + "px";
+          canvas.style.height = innerHeight + "px";
+          uniforms.u_res.value.set(w, h);
         }
-        addEventListener("resize", resize);
+        window.addEventListener("resize", resize);
 
-        // —— UI —— //
+        // ====== UI 句柄 ======
         const id = (x) => document.getElementById(x);
         const sizeR = id("sizeRange"),
           radR = id("radiusRange"),
@@ -674,11 +531,6 @@ void main(){
         const lifeR = id("lifeRange"),
           vLife = id("vLife");
 
-        function updateGapReadout() {
-          const gx = snap05(CELL.stepX - 2 * CFG.size);
-          const gy = snap05(CELL.stepY - 1 * CFG.size);
-          vGapReal.textContent = `${gx.toFixed(1)} / ${gy.toFixed(1)} px`;
-        }
         function setBindLabel(btn, sym, mode) {
           btn.setAttribute("aria-pressed", mode !== 0);
           btn.textContent = `${sym}↔速：${
@@ -687,6 +539,11 @@ void main(){
         }
         function cycleMode(m) {
           return m === 1 ? 0 : m === 0 ? -1 : 1;
+        }
+        function updateGapReadout() {
+          const gx = snap05(CELL.stepX - 2 * CFG.size),
+            gy = snap05(CELL.stepY - 1 * CFG.size);
+          vGapReal.textContent = `${gx.toFixed(1)} / ${gy.toFixed(1)} px`;
         }
 
         function initSliders() {
@@ -700,7 +557,6 @@ void main(){
           vGapX.textContent = GAP.x.toFixed(1) + " px";
           gapYR.value = GAP.y;
           vGapY.textContent = GAP.y.toFixed(1) + " px";
-
           spdR.value = CFG.pulseSpeedHz;
           vSpd.textContent = CFG.pulseSpeedHz.toFixed(2) + " Hz";
           crR.value = CFG.connectRange;
@@ -711,40 +567,33 @@ void main(){
           vPhiAA.textContent = CFG.phiAA.toFixed(2);
           cbiasR.value = CFG.cornerBias;
           vCBias.textContent = CFG.cornerBias.toFixed(2);
-
           sigR.value = WAVE.sigma;
           vSig.textContent = WAVE.sigma.toFixed(0) + " px";
           fqR.value = WAVE.freq;
           vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
           gamR.value = WAVE.gamma;
           vGam.textContent = WAVE.gamma.toFixed(2);
-
           ratioR.value = PLUCK.ratio;
           vRatio.textContent = PLUCK.ratio.toFixed(3);
-
           speedCapR.value = SPEEDBIND.capPx;
           vSCap.textContent = SPEEDBIND.capPx + " px/s";
           speedEffR.value = SPEEDBIND.effect;
           vSEff.textContent = SPEEDBIND.effect.toFixed(2);
           vMS.textContent = "0 px/s";
-
           setBindLabel(bAmp, "amp", SPEEDBIND.ampMode);
           setBindLabel(bSig, "σ", SPEEDBIND.sigMode);
           setBindLabel(bFq, "f", SPEEDBIND.fqMode);
           setBindLabel(bGam, "γ", SPEEDBIND.gamMode);
-
           dropR.value = DROP.dist;
           vDrop.textContent = DROP.dist + " px";
-
           capR.value = LIMIT.dispCap;
           vCap.textContent = LIMIT.dispCap + " px";
           lifeR.value = LIMIT.lifeSec;
           vLife.textContent = LIMIT.lifeSec.toFixed(1) + " s";
-
           updateGapReadout();
         }
 
-        // —— UI 事件 —— //
+        // UI事件
         sizeR.oninput = () => {
           CFG.size = snap05(+sizeR.value);
           vSize.textContent = CFG.size.toFixed(1) + " px";
@@ -768,7 +617,7 @@ void main(){
           GAP.x = snap05(+gapXR.value);
           vGapX.textContent = GAP.x.toFixed(1) + " px";
           CELL.stepX = snap05(Math.max(2, 2 * CFG.size + GAP.x));
-          syncGrid();
+          syncStatics();
           updateGapReadout();
           persist();
         };
@@ -776,7 +625,7 @@ void main(){
           GAP.y = snap05(+gapYR.value);
           vGapY.textContent = GAP.y.toFixed(1) + " px";
           CELL.stepY = snap05(Math.max(2, 1 * CFG.size + GAP.y));
-          syncGrid();
+          syncStatics();
           updateGapReadout();
           persist();
         };
@@ -789,52 +638,50 @@ void main(){
         crR.oninput = () => {
           CFG.connectRange = +crR.value;
           vCR.textContent = CFG.connectRange.toFixed(1) + " px";
-          gl.uniform1f(
-            u_falloff,
-            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR0)
-          );
+          uniforms.u_falloff.value =
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR0);
           persist();
         };
         thR.oninput = () => {
           CFG.threshold = +thR.value;
           vTh.textContent = CFG.threshold.toFixed(2);
-          gl.uniform1f(u_thresh, CFG.threshold);
+          uniforms.u_thresh.value = CFG.threshold;
           persist();
         };
         phiAAR.oninput = () => {
           CFG.phiAA = +phiAAR.value;
           vPhiAA.textContent = CFG.phiAA.toFixed(2);
-          gl.uniform1f(u_phiAA, CFG.phiAA);
+          uniforms.u_phiAA.value = CFG.phiAA;
           persist();
         };
         cbiasR.oninput = () => {
           CFG.cornerBias = +cbiasR.value;
           vCBias.textContent = CFG.cornerBias.toFixed(2);
-          gl.uniform1f(u_cornerBias, CFG.cornerBias);
+          uniforms.u_cornerBias.value = CFG.cornerBias;
           persist();
         };
-
         sigR.oninput = () => {
           WAVE.sigma = +sigR.value;
           vSig.textContent = WAVE.sigma.toFixed(0) + " px";
+          uniforms.u_sigma.value = WAVE.sigma * DPR0;
           persist();
         };
         fqR.oninput = () => {
           WAVE.freq = +fqR.value;
           vFq.textContent = WAVE.freq.toFixed(2) + " Hz";
+          uniforms.u_freq.value = WAVE.freq;
           persist();
         };
         gamR.oninput = () => {
           WAVE.gamma = +gamR.value;
           vGam.textContent = WAVE.gamma.toFixed(2);
-          // 反向同步 τ：τ = ln(100)/γ
           const tau = Math.log(100.0) / Math.max(1e-4, WAVE.gamma);
           LIMIT.lifeSec = clamp(tau, 0.3, 8.0);
           lifeR.value = LIMIT.lifeSec;
           vLife.textContent = LIMIT.lifeSec.toFixed(1) + " s";
+          uniforms.u_gamma.value = WAVE.gamma;
           persist();
         };
-
         ratioR.oninput = () => {
           PLUCK.ratio = +ratioR.value;
           vRatio.textContent = PLUCK.ratio.toFixed(3);
@@ -855,21 +702,20 @@ void main(){
           vDrop.textContent = DROP.dist + " px";
           persist();
         };
-
         capR.oninput = () => {
           LIMIT.dispCap = +capR.value;
           vCap.textContent = LIMIT.dispCap + " px";
-          gl.uniform1f(u_dispCap, LIMIT.dispCap * DPR0);
-          gl.uniform1f(u_dispSoft, LIMIT.dispCap * 0.8 * DPR0);
+          uniforms.u_dispCap.value = LIMIT.dispCap * DPR0;
+          uniforms.u_dispSoft.value = LIMIT.dispCap * 2.0 * DPR0;
           persist();
         };
         lifeR.oninput = () => {
           LIMIT.lifeSec = +lifeR.value;
           vLife.textContent = LIMIT.lifeSec.toFixed(1) + " s";
-          // τ -> γ（包络到 ~1% 的时间）
           const gammaFromTau = Math.log(100.0) / Math.max(0.1, LIMIT.lifeSec);
           WAVE.gamma = gammaFromTau;
           vGam.textContent = WAVE.gamma.toFixed(2);
+          uniforms.u_gamma.value = WAVE.gamma;
           persist();
         };
 
@@ -894,7 +740,7 @@ void main(){
           persist();
         };
 
-        // —— 开关 —— //
+        // 开关
         let pluckOn = true,
           pulseOn = false;
         const btnPulse = document.getElementById("pulse"),
@@ -916,13 +762,13 @@ void main(){
           refreshButtons();
           persist();
         };
-        addEventListener("keydown", (e) => {
+        window.addEventListener("keydown", (e) => {
           if (e.key === "p" || e.key === "P") btnPulse.click();
           if (e.key === "o" || e.key === "O") btnPluck.click();
         });
         refreshButtons();
 
-        // —— 速度映射 —— //
+        // ====== 速度映射（amp/sigma 仍可绑定；freq/gamma 默认关闭） ======
         let instSpeed = 0,
           smoothSpeed = 0;
         function mapBySpeed(base, mode) {
@@ -935,42 +781,44 @@ void main(){
           return mode === 1 ? base * g : base / g;
         }
 
-        // —— 路径脉冲（CPU 列表） —— //
-        let pulses = []; // {x,y,angle,t0,gain}
+        // ====== 路径脉冲（CPU） ======
+        const pulses = []; // {x,y,angle,t0,gain}
         function pushPulse(x, y, angle, t0, gain) {
           pulses.push({ x, y, angle, t0, gain });
         }
         function pruneAndUpload(now) {
-          const g = Math.max(1e-4, mapBySpeed(WAVE.gamma, SPEEDBIND.gamMode));
+          // 使用固定 γ 计算寿命，避免“刚停下还在变”的延迟感
+          const g = Math.max(1e-4, WAVE.gamma);
           const life = clamp(Math.log(100.0) / g, 0.3, 8.0);
-          if (pulses.length) {
-            let w = 0;
-            for (let i = 0; i < pulses.length; i++) {
-              if (now - pulses[i].t0 <= life) pulses[w++] = pulses[i];
-            }
-            pulses.length = w;
+          let w = 0;
+          for (let i = 0; i < pulses.length; i++) {
+            if (now - pulses[i].t0 <= life) pulses[w++] = pulses[i];
           }
-          const n = Math.min(pulses.length, MAX_PULSES);
-          gl.uniform1f(u_pCount, n);
+          pulses.length = w;
+
+          const count = Math.min(pulses.length, MAX_PULSES);
+          uniforms.u_pCount.value = count;
+          const arrV = uniforms.u_pulses.value;
+          const arrG = uniforms.u_pGain.value;
           for (let i = 0; i < MAX_PULSES; i++) {
-            if (i < n) {
-              const p = pulses[pulses.length - 1 - i];
-              gl.uniform4f(u_pEls[i], p.x, p.y, p.t0, p.angle);
-              gl.uniform1f(u_gEls[i], p.gain);
+            if (i < count) {
+              const p = pulses[pulses.length - 1 - i]; // 近的放前面
+              arrV[i].set(p.x, p.y, p.t0, p.angle);
+              arrG[i] = p.gain;
             } else {
-              gl.uniform4f(u_pEls[i], 0, 0, 0, 0);
-              gl.uniform1f(u_gEls[i], 0);
+              arrV[i].set(0, 0, 0, 0);
+              arrG[i] = 0;
             }
           }
         }
 
-        // —— 指针事件：按固定距离撒点 —— //
+        // ====== 指针事件：按固定距离撒点（无“低速兜底脉冲”） ======
         const mouse = { prevX: 0, prevY: 0, tPrev: 0 };
         let emitResidue = 0;
-        addEventListener(
+        window.addEventListener(
           "pointermove",
           (e) => {
-            const rect = glCanvas.getBoundingClientRect();
+            const rect = canvas.getBoundingClientRect();
             const x = (e.clientX - rect.left) * DPR_CUR,
               y = (rect.bottom - e.clientY) * DPR_CUR;
             const now = performance.now() * 0.001,
@@ -990,7 +838,7 @@ void main(){
               const x0 = mouse.prevX,
                 y0 = mouse.prevY;
               const segLen = Math.hypot(x - x0, y - y0);
-              const sEmit = Math.max(2, DROP.dist * DPR_CUR); // Δs（CSS px）→ 帧缓冲像素
+              const sEmit = Math.max(2, DROP.dist * DPR_CUR);
 
               let need = Math.floor((emitResidue + segLen) / sEmit);
               if (need > MAX_SUB_PER_MOVE) need = MAX_SUB_PER_MOVE;
@@ -1011,11 +859,8 @@ void main(){
                 }
                 emitResidue = Math.max(0, emitResidue + segLen - need * sEmit);
               } else {
-                // 极慢移动兜底：以时间触发
-                if (now - mouse.tPrev > 0.08 && instSpeed < 5) {
-                  pushPulse(x, y, angle || 0.0, now, 0.35);
-                  emitResidue = 0;
-                }
+                // 不再兜底追加低速脉冲，避免“刚停下又被推了一把”的延迟感
+                emitResidue = Math.min(emitResidue + segLen, sEmit);
               }
             }
 
@@ -1026,14 +871,14 @@ void main(){
           { passive: true }
         );
 
-        addEventListener(
+        window.addEventListener(
           "pointerdown",
           (e) => {
-            const rect = glCanvas.getBoundingClientRect();
+            const rect = canvas.getBoundingClientRect();
             const x = (e.clientX - rect.left) * DPR_CUR,
               y = (rect.bottom - e.clientY) * DPR_CUR;
             const now = performance.now() * 0.001;
-            pushPulse(x, y, 0.0, now, 0.5); // 起点也丢一个
+            pushPulse(x, y, 0.0, now, 0.5);
             emitResidue = 0;
             mouse.prevX = x;
             mouse.prevY = y;
@@ -1042,39 +887,25 @@ void main(){
           { passive: true }
         );
 
-        // —— 渲染循环 —— //
+        // ====== 渲染循环 ======
         let t0 = performance.now();
         function frame() {
           const t = (performance.now() - t0) * 0.001;
-          gl.uniform1f(u_time, t);
+          uniforms.u_time.value = t;
 
-          gl.uniform1f(u_amp, mapBySpeed(WAVE.amp, SPEEDBIND.ampMode));
-          gl.uniform1f(
-            u_sigma,
-            mapBySpeed(WAVE.sigma, SPEEDBIND.sigMode) * DPR0
-          );
-          gl.uniform1f(u_freq, mapBySpeed(WAVE.freq, SPEEDBIND.fqMode));
-          gl.uniform1f(u_gamma, mapBySpeed(WAVE.gamma, SPEEDBIND.gamMode));
-
-          gl.clearColor(0, 0, 0, 1);
-          gl.clear(gl.COLOR_BUFFER_BIT);
+          // amp/sigma 可选随速映射；freq/gamma 使用固定值，确保“生成即回弹”
+          uniforms.u_amp.value = mapBySpeed(WAVE.amp, SPEEDBIND.ampMode);
+          uniforms.u_sigma.value =
+            mapBySpeed(WAVE.sigma, SPEEDBIND.sigMode) * DPR0;
+          uniforms.u_freq.value = WAVE.freq;
+          uniforms.u_gamma.value = WAVE.gamma;
 
           pruneAndUpload(t);
-          gl.drawArrays(gl.TRIANGLES, 0, 3);
+          renderer.render(scene, camera);
           requestAnimationFrame(frame);
         }
 
-        // —— 启动 —— //
-        function applyPulseUniforms() {
-          gl.uniform1f(u_pulseMin, pulseOn ? CFG.pulseMin : 1.0);
-          gl.uniform1f(u_pulseHz, pulseOn ? CFG.pulseSpeedHz : 0.0);
-        }
-        function updateGapReadout() {
-          const gx = snap05(CELL.stepX - 2 * CFG.size),
-            gy = snap05(CELL.stepY - 1 * CFG.size);
-          vGapReal.textContent = `${gx.toFixed(1)} / ${gy.toFixed(1)} px`;
-        }
-
+        // ====== 启动 ======
         resize();
         syncStatics();
         initSliders();

@@ -326,7 +326,10 @@
         }
 
         // —— WebGL ——
-        const DPR = Math.min(2, window.devicePixelRatio || 1);
+        // 启动时冻结的 DPR（决定方块/网格/AA等“物理尺寸”）
+        const DPR0 = Math.min(2, window.devicePixelRatio || 1);
+        // 每次 resize/缩放时实时的 DPR（只用于画布分辨率 & 指针坐标）
+        let DPR_CUR = DPR0;
         const glCanvas = document.getElementById("gl");
         const fbCanvas = document.getElementById("fallback");
         const errBox = document.getElementById("err");
@@ -532,8 +535,8 @@ void main(){
         const u_curTap = U("u_curTap"); // (x, y, angle, gain)
 
         function syncGrid() {
-          const sx = Math.round(Math.max(2, CELL.stepX * DPR));
-          const sy = Math.round(Math.max(2, CELL.stepY * DPR));
+          const sx = Math.round(Math.max(2, CELL.stepX * DPR0));
+          const sy = Math.round(Math.max(2, CELL.stepY * DPR0));
           gl.uniform2f(u_step, sx, sy);
         }
         function applyPulseUniforms() {
@@ -542,16 +545,16 @@ void main(){
         }
         function syncStatics() {
           const side = snap05(CFG.size);
-          const halfPx = Math.round((side * DPR) / 2);
+          const halfPx = Math.round((side * DPR0) / 2);
           gl.uniform2f(u_half0, halfPx, halfPx);
           const r = snap05(CFG.corner);
-          gl.uniform4f(u_radius4, r * DPR, r * DPR, r * DPR, r * DPR);
+          gl.uniform4f(u_radius4, r * DPR0, r * DPR0, r * DPR0, r * DPR0);
 
-          gl.uniform1f(u_aa, Math.max(0.0, CFG.aa * DPR));
+          gl.uniform1f(u_aa, Math.max(0.0, CFG.aa * DPR0));
           gl.uniform1f(u_thresh, CFG.threshold);
           gl.uniform1f(
             u_falloff,
-            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR0)
           );
           gl.uniform1f(u_phiAA, CFG.phiAA);
           gl.uniform1f(u_cornerBias, CFG.cornerBias);
@@ -560,8 +563,9 @@ void main(){
           applyPulseUniforms();
         }
         function resize() {
-          const w = Math.floor(innerWidth * DPR),
-            h = Math.floor(innerHeight * DPR);
+          DPR_CUR = Math.min(2, window.devicePixelRatio || 1); // 捕获当前缩放下的 DPR
+          const w = Math.floor(innerWidth * DPR_CUR);
+          const h = Math.floor(innerHeight * DPR_CUR);
           glCanvas.width = w;
           glCanvas.height = h;
           glCanvas.style.width = innerWidth + "px";
@@ -740,7 +744,7 @@ void main(){
           vCR.textContent = CFG.connectRange.toFixed(1) + " px";
           gl.uniform1f(
             u_falloff,
-            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR)
+            Math.log(2.0) / (Math.max(1e-3, CFG.connectRange) * DPR0)
           );
           persist();
         };
@@ -913,8 +917,9 @@ void main(){
           "pointermove",
           (e) => {
             const rect = glCanvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * DPR,
-              y = (rect.bottom - e.clientY) * DPR;
+            const x = (e.clientX - rect.left) * DPR_CUR;
+            const y = (rect.bottom - e.clientY) * DPR_CUR;
+
             const now = performance.now() * 0.001,
               dt = Math.max(1e-3, now - mouse.tPrev);
             const vx = (x - mouse.prevX) / dt,
@@ -950,8 +955,8 @@ void main(){
           "pointerdown",
           (e) => {
             const rect = glCanvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) * DPR,
-              y = (rect.bottom - e.clientY) * DPR;
+            const x = (e.clientX - rect.left) * DPR_CUR;
+            const y = (rect.bottom - e.clientY) * DPR_CUR;
             gl.uniform1f(u_hasTap, 1.0);
             gl.uniform4f(u_curTap, x, y, 0.0, 0.5); // 静止按下也能看到一点效果
             mouse.prevX = x;
@@ -989,7 +994,7 @@ void main(){
           gl.uniform1f(u_amp, mapBySpeed(WAVE.amp, SPEEDBIND.ampMode));
           gl.uniform1f(
             u_sigma,
-            mapBySpeed(WAVE.sigma, SPEEDBIND.sigMode) * DPR
+            mapBySpeed(WAVE.sigma, SPEEDBIND.sigMode) * DPR0
           );
 
           gl.drawArrays(gl.TRIANGLES, 0, 3);

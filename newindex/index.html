@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Splat Pass 最小复现（修正版 / 兼容 WebGL1/2）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  html,body{margin:0;height:100%;background:#0b0f14}
+  canvas{display:block;width:100%;height:100%}
+  .hud{position:fixed;left:12px;top:10px;color:#9fb0c8;font:12px/1.4 ui-monospace,monospace;background:#0b0f1480;border:1px solid #223044;border-radius:8px;padding:8px 10px;user-select:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud" id="hud">Splat demo  |  LMB: draw  |  C: clear  |  Wheel: radius</div>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.138.0/build/three.module.js";
+
+/* ----------- 兼容 GLSL100/300 的着色器（不再重复声明 attribute） ----------- */
+const VERT = `
+precision highp float;
+
+// three.js 已经声明了 position/uv，这里直接用即可
+#if __VERSION__ >= 300
+out vec2 vUv;
+#else
+varying vec2 vUv;
+#endif
+
+void main(){
+  vUv = uv;                       // 直接使用 three 注入的 uv
+  gl_Position = vec4(position,1.0);
+}
+`;
+
+const FRAG = `
+precision highp float;
+
+uniform sampler2D uTarget;
+uniform float aspectRatio;
+uniform vec3  color;
+uniform vec2  point;
+uniform vec2  prevPoint;
+uniform float radius;
+uniform bool  isDye;
+
+#if __VERSION__ >= 300
+in vec2 vUv;
+out vec4 FragColor;
+#define TEX texture
+#define FRAG FragColor
+#else
+varying vec2 vUv;
+#define TEX texture2D
+#define FRAG gl_FragColor
+#endif
+
+float lineDist(vec2 uv, vec2 p1, vec2 p2){
+  vec2 pa = uv - p1, ba = p2 - p1;
+  pa.x *= aspectRatio;
+  ba.x *= aspectRatio;
+  float h = clamp(dot(pa,ba)/dot(ba,ba), 0.0, 1.0);
+  return length(pa - ba*h);
+}
+float cubicIn(float t){ return t*t*t; }
+
+void main(){
+  float d = lineDist(vUv, prevPoint, point);
+  vec3  splat = cubicIn(clamp(1.0 - d / radius, 0.0, 1.0)) * color;
+
+  vec3 base = TEX(uTarget, vUv).rgb;
+  vec3 result = base + splat;
+  if (isDye) result = clamp(result, vec3(0.0), vec3(1.0));
+
+  FRAG = vec4(result, 1.0);
+}
+`;
+
+/* --------------------- Three 基础搭建 --------------------- */
+const canvas   = document.getElementById('c');
+
+/* 如仍遇到 GLSL300 相关报错，可改用下面两行强制 WebGL1
+   const gl = canvas.getContext('webgl', { antialias:true, alpha:false });
+   const renderer = new THREE.WebGLRenderer({ canvas, context: gl });
+*/
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+
+const scene  = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+
+// 屏幕显示用四边形
+const screenQuad = new THREE.Mesh(
+  new THREE.PlaneBufferGeometry(2,2),
+  new THREE.MeshBasicMaterial({ map: null })
+);
+scene.add(screenQuad);
+
+// 两个 RenderTarget 做 ping-pong
+let rtA, rtB;
+function makeRT(w,h){
+  return new THREE.WebGLRenderTarget(w,h,{
+    minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter,
+    wrapS:THREE.ClampToEdgeWrapping, wrapT:THREE.ClampToEdgeWrapping,
+    depthBuffer:false, stencilBuffer:false,
+    type:THREE.UnsignedByteType
+  });
+}
+
+// splat 叠加场景
+const uniforms = {
+  uTarget:      { value: null },
+  aspectRatio:  { value: 1.0 },
+  color:        { value: new THREE.Vector3(1,1,1) },
+  point:        { value: new THREE.Vector2(0.5,0.5) },
+  prevPoint:    { value: new THREE.Vector2(0.5,0.5) },
+  radius:       { value: 0.04 },
+  isDye:        { value: true }
+};
+const splatMat   = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: FRAG });
+const splatScene = new THREE.Scene();
+splatScene.add(new THREE.Mesh(new THREE.PlaneBufferGeometry(2,2), splatMat));
+
+// 尺寸
+function resize(){
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false);
+  const W = renderer.domElement.width;
+  const H = renderer.domElement.height;
+  uniforms.aspectRatio.value = W / H;
+
+  rtA?.dispose(); rtB?.dispose();
+  rtA = makeRT(W,H);
+  rtB = makeRT(W,H);
+
+  // 清空
+  renderer.setRenderTarget(rtA);
+  renderer.setClearColor(0x000000, 1);
+  renderer.clear(true, true, true);
+  renderer.setRenderTarget(rtB);
+  renderer.clear(true, true, true);
+  renderer.setRenderTarget(null);
+
+  screenQuad.material.map = rtA.texture;
+}
+window.addEventListener('resize', resize, { passive:true });
+resize();
+
+/* --------------------- 交互 --------------------- */
+let drawing = false;
+let px=0.5, py=0.5, cx=0.5, cy=0.5;
+let radius = 0.04;
+
+function toUV(e){
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width;
+  const y = (e.clientY - r.top)  / r.height;
+  return {x, y: 1.0 - y};
+}
+
+function doSplat(){
+  uniforms.uTarget.value = rtA.texture;
+  uniforms.point.value.set(cx, cy);
+  uniforms.prevPoint.value.set(px, py);
+  uniforms.radius.value = radius;
+
+  renderer.setRenderTarget(rtB);
+  renderer.render(splatScene, camera);
+  renderer.setRenderTarget(null);
+
+  [rtA, rtB] = [rtB, rtA];
+  screenQuad.material.map = rtA.texture;
+}
+
+canvas.addEventListener('pointerdown', (e)=>{
+  drawing = true;
+  const p = toUV(e);
+  px = cx = p.x; py = cy = p.y;
+  doSplat();
+});
+window.addEventListener('pointermove', (e)=>{
+  if (!drawing) return;
+  const p = toUV(e);
+  const vx = (p.x - cx), vy = (p.y - cy);
+  const speed = Math.min(1.0, Math.hypot(vx, vy) * 40.0);
+  uniforms.color.value.set(0.2 + 0.8*speed, 0.4, 1.0 - 0.8*speed);
+
+  px = cx; py = cy;
+  cx = p.x; cy = p.y;
+  doSplat();
+});
+window.addEventListener('pointerup',   ()=> drawing=false);
+window.addEventListener('pointerleave',()=> drawing=false);
+
+// 滚轮调半径
+window.addEventListener('wheel', (e)=>{
+  radius *= (e.deltaY < 0 ? 1.1 : 0.9);
+  radius = Math.max(0.002, Math.min(0.25, radius));
+  document.getElementById('hud').textContent =
+    `Splat demo  |  LMB: draw  |  C: clear  |  Wheel: radius=${radius.toFixed(3)}`;
+}, {passive:true});
+
+// C 清屏
+window.addEventListener('keydown', (e)=>{
+  if (e.key.toLowerCase() === 'c'){
+    renderer.setRenderTarget(rtA);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear(true, true, true);
+    renderer.setRenderTarget(null);
+  }
+});
+
+/* --------------------- 渲染循环 --------------------- */
+renderer.setAnimationLoop(()=> { renderer.render(scene, camera); });
+</script>
+</body>
+</html>
