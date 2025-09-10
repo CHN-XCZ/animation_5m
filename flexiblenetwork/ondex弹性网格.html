@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>弹性网格 · 中心锚定交错阵列 · 方圆形变（物理涟漪 + 仿射变形）</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #000;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .ui {
+        position: fixed;
+        left: 14px;
+        top: 14px;
+        z-index: 5;
+        color: #cdd6f4;
+        font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
+          "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          sans-serif;
+        background: #0b0f14cc;
+        border: 1px solid #1c2636;
+        border-radius: 12px;
+        padding: 10px 12px;
+        backdrop-filter: blur(6px);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        max-width: min(96vw, 1100px);
+      }
+      .ui label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+      .ui input[type="range"] {
+        width: 140px;
+      }
+      .ui input[type="number"] {
+        width: 76px;
+        padding: 4px 6px;
+        border-radius: 8px;
+        border: 1px solid #1c2636;
+        background: #0b0f14;
+        color: #cdd6f4;
+      }
+      .mono {
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+      }
+      .sep {
+        width: 1px;
+        height: 18px;
+        background: #233043;
+        margin: 0 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <div class="ui">
+      <!-- 你的原有控制 -->
+      <label
+        >格子边长
+        <input id="cell" type="range" min="12" max="120" step="1" /><span
+          class="mono"
+          id="cellv"
+        ></span
+        >px</label
+      >
+      <label
+        >横间隔
+        <input id="gapX" type="number" min="0" max="240" step="1" /><span
+          class="mono"
+          >px</span
+        ></label
+      >
+      <label
+        >纵间隔
+        <input id="gapY" type="number" min="0" max="240" step="1" /><span
+          class="mono"
+          >px</span
+        ></label
+      >
+      <label
+        >比例
+        <input id="scale" type="range" min="0.25" max="3" step="0.01" /><span
+          class="mono"
+          id="scalev"
+        ></span
+        >×</label
+      >
+      <label
+        >最小（0~1）
+        <input id="minS" type="range" min="0" max="1" step="0.01" /><span
+          class="mono"
+          id="minSv"
+        ></span
+      ></label>
+      <label
+        >最大（0~2）
+        <input id="maxS" type="range" min="0" max="2" step="0.01" /><span
+          class="mono"
+          id="maxSv"
+        ></span
+      ></label>
+      <label
+        >呼吸时长
+        <input id="period" type="range" min="1.5" max="10" step="0.1" /><span
+          class="mono"
+          id="periodv"
+        ></span
+        >s</label
+      >
+      <label><input id="breath" type="checkbox" /> 开启呼吸</label>
+      <label
+        >圆角 n
+        <input id="nPow" type="range" min="2" max="12" step="0.1" /><span
+          class="mono"
+          id="nPowv"
+        ></span
+      ></label>
+      <label
+        >粘连 k（0~1·节距比）
+        <input id="kFac" type="range" min="0" max="0.7" step="0.01" /><span
+          class="mono"
+          id="kFacv"
+        ></span
+      ></label>
+      <span class="sep"></span>
+      <!-- 新增：物理与形变控制 -->
+      <label
+        >形变强度
+        <input id="shapeAmp" type="range" min="0" max="1.2" step="0.01" /><span
+          class="mono"
+          id="shapeAmpv"
+        ></span
+      ></label>
+      <label
+        >弹性k
+        <input id="springK" type="range" min="2" max="60" step="1" /><span
+          class="mono"
+          id="springKv"
+        ></span
+      ></label>
+      <label
+        >阻尼d <input id="damp" type="range" min="0" max="6" step="0.05" /><span
+          class="mono"
+          id="dampv"
+        ></span
+      ></label>
+      <label
+        >张力t
+        <input id="tension" type="range" min="0" max="56" step="0.05" /><span
+          class="mono"
+          id="tensionv"
+        ></span
+      ></label>
+      <label
+        >笔刷半径
+        <input id="brushR" type="range" min="10" max="240" step="1" /><span
+          class="mono"
+          id="brushRv"
+        ></span
+        >px</label
+      >
+      <label
+        >笔刷力度
+        <input id="brushF" type="range" min="50" max="3000" step="10" /><span
+          class="mono"
+          id="brushFv"
+        ></span
+      ></label>
+      <label
+        >场步长
+        <input id="fieldStep" type="range" min="6" max="32" step="1" /><span
+          class="mono"
+          id="fieldStepv"
+        ></span
+        >px</label
+      >
+    </div>
+
+    <script>
+      /* -------------------- WebGL 基础 -------------------- */
+      const canvas = document.getElementById("c");
+      const gl = canvas.getContext("webgl", {
+        antialias: false,
+        depth: false,
+        stencil: false,
+        premultipliedAlpha: false,
+      });
+      if (!gl) {
+        alert("WebGL 不可用");
+        throw new Error("no webgl");
+      }
+
+      const OESf = gl.getExtension("OES_texture_float");
+      if (!OESf) {
+        alert("需要 OES_texture_float 扩展");
+      }
+      let field = null;
+      function resize() {
+        const dpr = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(innerWidth * dpr);
+        canvas.height = Math.floor(innerHeight * dpr);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        if (field) initField(); // 屏幕变更时重建位移场
+      }
+      addEventListener("resize", resize, { passive: true });
+      resize();
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+      const vertSrc = `
+attribute vec2 aPos;
+void main(){ gl_Position = vec4(aPos,0.0,1.0); }`;
+
+      const fragSrc = `
+precision highp float;
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uCell;
+uniform vec2  uGap;
+uniform float uScale;
+uniform float uMinS;
+uniform float uMaxS;
+uniform float uPeriod;
+uniform float uBreathe;
+uniform float uAA;
+uniform float uNPow;
+uniform float uKFac;
+
+/* 位移场（屏幕坐标上的向量场） */
+uniform sampler2D uDisp;
+uniform vec2  uFieldSize;     // Nx, Ny （像素中心）
+uniform float uShapeAmp;      // 仿射形变强度 [0..1+]
+
+/* ---- SDF 工具 ---- */
+float sdSuperEllipse(vec2 p, vec2 r, float n){
+  p = abs(p) / r;
+  float k = pow(pow(p.x, n) + pow(p.y, n), 1.0/n);
+  return (k - 1.0) * min(r.x, r.y);
+}
+float smin(float a, float b, float k){
+  float hk = max(1e-4, k);
+  float h = clamp(0.5 + 0.5*(b - a)/hk, 0.0, 1.0);
+  return mix(b, a, h) - hk*h*(1.0 - h);
+}
+
+/* ---- 规则阵列：中心锚定 + 半节距偏移 ---- */
+vec2 nearestCenterRect(vec2 pos, vec2 pitch, vec2 anchor){
+  vec2 idx = floor((pos - anchor) / pitch + 0.5);
+  return anchor + pitch * idx;
+}
+
+/* ---- 位移场采样（手动双线性，确保与场尺寸无关） ---- */
+vec2 fetchDisp(vec2 ij){
+  vec2 uv = (ij + 0.5) / uFieldSize;
+  return texture2D(uDisp, uv).xy; // 单位：像素
+}
+vec2 sampleDispAt(vec2 pos){
+  // 将屏幕像素坐标映射到场网格坐标（0..Nx-1, 0..Ny-1）
+  vec2 g = (pos / uRes) * (uFieldSize - 1.0);
+  vec2 ij = floor(g);
+  vec2 f = clamp(g - ij, 0.0, 1.0);
+  vec2 d00 = fetchDisp(ij);
+  vec2 d10 = fetchDisp(ij + vec2(1.0,0.0));
+  vec2 d01 = fetchDisp(ij + vec2(0.0,1.0));
+  vec2 d11 = fetchDisp(ij + vec2(1.0,1.0));
+  return mix(mix(d00,d10,f.x), mix(d01,d11,f.x), f.y);
+}
+
+/* 位移梯度（中心差分） -> 2x2 雅可比 */
+mat2 localJac(vec2 pos){
+  vec2 step = uRes / max(uFieldSize - 1.0, vec2(1.0)); // 单位：像素
+  vec2 dpx = vec2(step.x, 0.0);
+  vec2 dpy = vec2(0.0, step.y);
+  vec2 ax = sampleDispAt(pos + dpx);
+  vec2 bx = sampleDispAt(pos - dpx);
+  vec2 ay = sampleDispAt(pos + dpy);
+  vec2 by = sampleDispAt(pos - dpy);
+  vec2 ddx = (ax - bx) / (2.0*step.x); // du/dx, dv/dx
+  vec2 ddy = (ay - by) / (2.0*step.y); // du/dy, dv/dy
+  return mat2(ddx.x, ddy.x, ddx.y, ddy.y); // [a b; c d]
+}
+mat2 inv2(mat2 m){
+  float a=m[0][0], b=m[0][1], c=m[1][0], d=m[1][1];
+  float det = max(1e-4, a*d - b*c);
+  return (1.0/det) * mat2(d, -b, -c, a);
+}
+
+void main(){
+  vec2 frag = gl_FragCoord.xy;
+  vec2 center = uRes * 0.5;
+
+  float cellS = uCell * uScale;
+  vec2  gapS  = uGap  * uScale;
+  vec2  pitch = vec2(cellS + gapS.x, cellS + gapS.y);
+
+  // 呼吸（可关闭）
+  float t = uTime / max(uPeriod, 1e-4);
+  float breathe = (uBreathe > 0.5) ? (0.5 + 0.5 * sin(6.2831853 * t)) : 1.0;
+  float s = (uBreathe > 0.5) ? mix(uMinS, uMaxS, breathe) : uMaxS;
+  float outerR = 0.5 * cellS * s;
+  vec2  r = vec2(outerR);
+
+  // 两套晶格：中心锚定 + 半节距偏移
+  vec2 c0 = nearestCenterRect(frag, pitch, center);
+  vec2 c1 = nearestCenterRect(frag, pitch, center + 0.5*pitch);
+
+  // 从位移场取得中心位移与局部梯度 -> 仿射形变
+  vec2 off0 = sampleDispAt(c0);
+  vec2 off1 = sampleDispAt(c1);
+  mat2 J0 = localJac(c0);
+  mat2 J1 = localJac(c1);
+  mat2 F0 = mat2(1.0,0.0,0.0,1.0) + uShapeAmp * J0;
+  mat2 F1 = mat2(1.0,0.0,0.0,1.0) + uShapeAmp * J1;
+  mat2 iF0 = inv2(F0);
+  mat2 iF1 = inv2(F1);
+
+  // 变形坐标系里测 SDF（方块可被拉长/剪切成为平行四边形等）
+  vec2 p0 = iF0 * (frag - (c0 + off0));
+  vec2 p1 = iF1 * (frag - (c1 + off1));
+  float d0 = sdSuperEllipse(p0, r, uNPow);
+  float d1 = sdSuperEllipse(p1, r, uNPow);
+
+  // 粘连半径 k：相对节距
+  float base = min(cellS, min(pitch.x, pitch.y));
+  float k = uKFac * base;
+  float d = smin(d0, d1, k);
+
+  float alpha = 1.0 - smoothstep(0.0, uAA, d);
+  gl_FragColor = vec4(vec3(1.0), alpha);
+}`;
+
+      /* ---- 编译链接 ---- */
+      function sh(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+          console.error(gl.getShaderInfoLog(s));
+          throw new Error(gl.getShaderInfoLog(s) || "shader compile failed");
+        }
+        return s;
+      }
+      function prog(vs, fs) {
+        const p = gl.createProgram();
+        gl.attachShader(p, vs);
+        gl.attachShader(p, fs);
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          console.error(gl.getProgramInfoLog(p));
+          throw new Error(gl.getProgramInfoLog(p) || "link failed");
+        }
+        return p;
+      }
+      const vs = sh(gl.VERTEX_SHADER, vertSrc);
+      const fs = sh(gl.FRAGMENT_SHADER, fragSrc);
+      const pr = prog(vs, fs);
+      gl.useProgram(pr);
+
+      /* 全屏三角形 */
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 3, -1, -1, 3]),
+        gl.STATIC_DRAW
+      );
+      const loc = gl.getAttribLocation(pr, "aPos");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      /* uniforms */
+      const uRes = gl.getUniformLocation(pr, "uRes");
+      const uTime = gl.getUniformLocation(pr, "uTime");
+      const uCell = gl.getUniformLocation(pr, "uCell");
+      const uGap = gl.getUniformLocation(pr, "uGap");
+      const uScale = gl.getUniformLocation(pr, "uScale");
+      const uMinS = gl.getUniformLocation(pr, "uMinS");
+      const uMaxS = gl.getUniformLocation(pr, "uMaxS");
+      const uPeriod = gl.getUniformLocation(pr, "uPeriod");
+      const uBreathe = gl.getUniformLocation(pr, "uBreathe");
+      const uAA = gl.getUniformLocation(pr, "uAA");
+      const uNPow = gl.getUniformLocation(pr, "uNPow");
+      const uKFac = gl.getUniformLocation(pr, "uKFac");
+      const uDisp = gl.getUniformLocation(pr, "uDisp");
+      const uFieldSize = gl.getUniformLocation(pr, "uFieldSize");
+      const uShapeAmp = gl.getUniformLocation(pr, "uShapeAmp");
+
+      /* -------------------- UI + 本地存储 -------------------- */
+      const $ = (id) => document.getElementById(id);
+      const cell = $("cell"),
+        cellv = $("cellv");
+      const gapX = $("gapX"),
+        gapY = $("gapY");
+      const scale = $("scale"),
+        scalev = $("scalev");
+      const minS = $("minS"),
+        minSv = $("minSv");
+      const maxS = $("maxS"),
+        maxSv = $("maxSv");
+      const period = $("period"),
+        periodv = $("periodv");
+      const breath = $("breath");
+      const nPow = $("nPow"),
+        nPowv = $("nPowv");
+      const kFac = $("kFac"),
+        kFacv = $("kFacv");
+
+      const shapeAmp = $("shapeAmp"),
+        shapeAmpv = $("shapeAmpv");
+      const springK = $("springK"),
+        springKv = $("springKv");
+      const damp = $("damp"),
+        dampv = $("dampv");
+      const tension = $("tension"),
+        tensionv = $("tensionv");
+      const brushR = $("brushR"),
+        brushRv = $("brushRv");
+      const brushF = $("brushF"),
+        brushFv = $("brushFv");
+      const fieldStep = $("fieldStep"),
+        fieldStepv = $("fieldStepv");
+
+      const KEY = "grid_ring_filled_cfg_v2_phys";
+      const defaults = {
+        cell: 40,
+        gapX: 12,
+        gapY: 12,
+        scale: 1.0,
+        minS: 0.9,
+        maxS: 1.0,
+        period: 4.0,
+        breath: false,
+        nPow: 4.0,
+        kFac: 0.35,
+        shapeAmp: 0.7,
+        springK: 22,
+        damp: 1.6,
+        tension: 0.9,
+        brushR: 100,
+        brushF: 1200,
+        fieldStep: 12,
+      };
+      function loadCfg() {
+        try {
+          return Object.assign(
+            {},
+            defaults,
+            JSON.parse(localStorage.getItem(KEY) || "{}")
+          );
+        } catch {
+          return { ...defaults };
+        }
+      }
+      function saveCfg() {
+        const cfg = {
+          cell: +cell.value,
+          gapX: +gapX.value,
+          gapY: +gapY.value,
+          scale: +scale.value,
+          minS: +minS.value,
+          maxS: +maxS.value,
+          period: +period.value,
+          breath: !!breath.checked,
+          nPow: +nPow.value,
+          kFac: +kFac.value,
+          shapeAmp: +shapeAmp.value,
+          springK: +springK.value,
+          damp: +damp.value,
+          tension: +tension.value,
+          brushR: +brushR.value,
+          brushF: +brushF.value,
+          fieldStep: +fieldStep.value,
+        };
+        localStorage.setItem(KEY, JSON.stringify(cfg));
+      }
+
+      /* 写入 GL uniforms */
+      function setUniforms() {
+        gl.uniform2f(uRes, canvas.width, canvas.height);
+        gl.uniform1f(uCell, +cell.value);
+        gl.uniform2f(uGap, Math.max(0, +gapX.value), Math.max(0, +gapY.value));
+        gl.uniform1f(uScale, +scale.value);
+        gl.uniform1f(uMinS, +minS.value);
+        gl.uniform1f(uMaxS, +maxS.value);
+        gl.uniform1f(uPeriod, +period.value);
+        gl.uniform1f(uBreathe, breath.checked ? 1.0 : 0.0);
+        gl.uniform1f(uAA, 1.25);
+        gl.uniform1f(uNPow, +nPow.value);
+        gl.uniform1f(uKFac, +kFac.value);
+        gl.uniform1f(uShapeAmp, +shapeAmp.value);
+        if (field) {
+          gl.uniform2f(uFieldSize, field.Nx, field.Ny);
+        }
+      }
+      function syncLabels() {
+        cellv.textContent = (+cell.value).toFixed(0);
+        scalev.textContent = (+scale.value).toFixed(2);
+        minSv.textContent = (+minS.value).toFixed(2);
+        maxSv.textContent = (+maxS.value).toFixed(2);
+        periodv.textContent = (+period.value).toFixed(1);
+        nPowv.textContent = (+nPow.value).toFixed(1);
+        kFacv.textContent = (+kFac.value).toFixed(2);
+
+        shapeAmpv.textContent = (+shapeAmp.value).toFixed(2);
+        springKv.textContent = (+springK.value).toFixed(0);
+        dampv.textContent = (+damp.value).toFixed(2);
+        tensionv.textContent = (+tension.value).toFixed(2);
+        brushRv.textContent = (+brushR.value).toFixed(0);
+        brushFv.textContent = (+brushF.value).toFixed(0);
+        fieldStepv.textContent = (+fieldStep.value).toFixed(0);
+      }
+      function syncAll() {
+        syncLabels();
+        setUniforms();
+        saveCfg();
+      }
+
+      /* 初始化 UI */
+      (function initUI() {
+        const cfg = loadCfg();
+        cell.value = cfg.cell;
+        gapX.value = cfg.gapX;
+        gapY.value = cfg.gapY;
+        scale.value = cfg.scale;
+        minS.value = cfg.minS;
+        maxS.value = cfg.maxS;
+        period.value = cfg.period;
+        breath.checked = cfg.breath;
+        nPow.value = cfg.nPow;
+        kFac.value = cfg.kFac;
+        shapeAmp.value = cfg.shapeAmp;
+        springK.value = cfg.springK;
+        damp.value = cfg.damp;
+        tension.value = cfg.tension;
+        brushR.value = cfg.brushR;
+        brushF.value = cfg.brushF;
+        fieldStep.value = cfg.fieldStep;
+        syncAll();
+      })();
+      [
+        cell,
+        gapX,
+        gapY,
+        scale,
+        minS,
+        maxS,
+        period,
+        breath,
+        nPow,
+        kFac,
+        shapeAmp,
+        springK,
+        damp,
+        tension,
+        brushR,
+        brushF,
+        fieldStep,
+      ].forEach((e) => {
+        e.addEventListener("input", () => {
+          if (e === fieldStep) initField();
+          syncAll();
+        });
+        e.addEventListener("change", () => {
+          if (e === fieldStep) initField();
+          syncAll();
+        });
+      });
+
+      /* -------------------- 位移场物理（CPU） -------------------- */
+
+      function createTexture(w, h) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          w,
+          h,
+          0,
+          gl.RGBA,
+          gl.FLOAT,
+          null
+        );
+        return tex;
+      }
+      function initField() {
+        const step = +fieldStep.value;
+        const Nx = Math.max(2, Math.floor(canvas.width / step) + 1);
+        const Ny = Math.max(2, Math.floor(canvas.height / step) + 1);
+        const hx = canvas.width / (Nx - 1);
+        const hy = canvas.height / (Ny - 1);
+        const size = Nx * Ny * 2;
+        field = {
+          Nx,
+          Ny,
+          hx,
+          hy,
+          u: new Float32Array(size), // 位移 (px)
+          v: new Float32Array(size), // 速度 (px/s)
+          tex: createTexture(Nx, Ny),
+          pack: new Float32Array(Nx * Ny * 4), // RGBA: (ux,uy,0,1)
+        };
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, field.tex);
+        gl.uniform1i(uDisp, 0);
+        gl.uniform2f(uFieldSize, Nx, Ny);
+      }
+      initField();
+
+      /* 访问索引 */
+      function idx(i, j) {
+        return 2 * (i + j * field.Nx);
+      }
+
+      /* 时间积分：2D 波/弹簧 + 阻尼 + 张力 */
+      function stepField(dt) {
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          u = field.u,
+          v = field.v;
+        const k = +springK.value; // 拉普拉斯强度
+        const d = +damp.value; // 阻尼
+        const T = +tension.value; // 直达回位的张力（让网整体被拉回）
+        // 内部点：计算拉普拉斯加速度
+        for (let j = 1; j < Ny - 1; j++) {
+          for (let i = 1; i < Nx - 1; i++) {
+            const c = idx(i, j);
+            const l = idx(i - 1, j),
+              r = idx(i + 1, j),
+              t = idx(i, j - 1),
+              b = idx(i, j + 1);
+            // 4 邻域拉普拉斯（px）
+            const lapx = u[l] + u[r] + u[t] + u[b] - 4 * u[c];
+            const lapy =
+              u[l + 1] + u[r + 1] + u[t + 1] + u[b + 1] - 4 * u[c + 1];
+            // a = k*lap - T*u - d*v
+            const ax = k * lapx - T * u[c] - d * v[c];
+            const ay = k * lapy - T * u[c + 1] - d * v[c + 1];
+            v[c] += ax * dt;
+            v[c + 1] += ay * dt;
+          }
+        }
+        // 边界：固定（位移/速度回零）
+        for (let i = 0; i < Nx; i++) {
+          let c0 = idx(i, 0),
+            c1 = idx(i, Ny - 1);
+          v[c0] = v[c0 + 1] = 0;
+          u[c0] = u[c0 + 1] = 0;
+          v[c1] = v[c1 + 1] = 0;
+          u[c1] = u[c1 + 1] = 0;
+        }
+        for (let j = 0; j < Ny; j++) {
+          let c0 = idx(0, j),
+            c1 = idx(Nx - 1, j);
+          v[c0] = v[c0 + 1] = 0;
+          u[c0] = u[c0 + 1] = 0;
+          v[c1] = v[c1 + 1] = 0;
+          u[c1] = u[c1 + 1] = 0;
+        }
+        // 更新位移
+        for (let n = 0; n < u.length; n++) {
+          u[n] += v[n] * dt;
+        }
+      }
+
+      /* 鼠标外力：沿速度方向施力（“子弹”效果），范围为软圆刷 */
+      const mouse = {
+        x: 0,
+        y: 0,
+        px: 0,
+        py: 0,
+        vx: 0,
+        vy: 0,
+        down: false,
+        in: true,
+      };
+      addEventListener("pointermove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+        mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      });
+      addEventListener("pointerenter", () => (mouse.in = true));
+      addEventListener("pointerleave", () => (mouse.in = false));
+      addEventListener("pointerdown", () => (mouse.down = true));
+      addEventListener("pointerup", () => (mouse.down = false));
+
+      function applyBrush(dt) {
+        // 速度：基于上一帧位置
+        const vx = (mouse.x - mouse.px) / Math.max(dt, 1e-4);
+        const vy = (mouse.y - mouse.py) / Math.max(dt, 1e-4);
+        mouse.vx = vx;
+        mouse.vy = vy;
+        mouse.px = mouse.x;
+        mouse.py = mouse.y;
+
+        if (!mouse.in) return;
+        const R = +brushR.value;
+        const F = +brushF.value;
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          hx = field.hx,
+          hy = field.hy;
+        // 将刷子覆盖范围换算成网格索引范围
+        const ix = Math.round(mouse.x / hx);
+        const iy = Math.round(mouse.y / hy);
+        const ir = Math.ceil(R / Math.min(hx, hy)) + 1;
+        for (let j = Math.max(1, iy - ir); j < Math.min(Ny - 1, iy + ir); j++) {
+          for (
+            let i = Math.max(1, ix - ir);
+            i < Math.min(Nx - 1, ix + ir);
+            i++
+          ) {
+            const x = i * hx,
+              y = j * hy;
+            const dx = x - mouse.x,
+              dy = y - mouse.y;
+            const r2 = dx * dx + dy * dy;
+            if (r2 > R * R) continue;
+            const w = Math.pow(1 - r2 / (R * R), 2.0); // 软刷（C1 连续）
+            const c = idx(i, j);
+            // 外力沿鼠标速度方向（进入凹、拉出凸）+ 少量指向中心项提升“穿透感”
+            field.v[c] += (F * vx * w * dt) / 1000.0;
+            field.v[c + 1] += (F * vy * w * dt) / 1000.0;
+          }
+        }
+      }
+
+      /* 将位移打包进浮点纹理（RG=位移px），片元着色器做双线性插值 */
+      function uploadField() {
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          pack = field.pack,
+          u = field.u;
+        let k = 0;
+        for (let j = 0; j < Ny; j++) {
+          for (let i = 0; i < Nx; i++) {
+            const p = idx(i, j);
+            pack[k++] = u[p]; // R: ux(px)
+            pack[k++] = u[p + 1]; // G: uy(px)
+            pack[k++] = 0.0; // B
+            pack[k++] = 1.0; // A
+          }
+        }
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, field.tex);
+        gl.texSubImage2D(
+          gl.TEXTURE_2D,
+          0,
+          0,
+          0,
+          Nx,
+          Ny,
+          gl.RGBA,
+          gl.FLOAT,
+          pack
+        );
+      }
+
+      /* -------------------- 渲染循环 -------------------- */
+      gl.clearColor(0, 0, 0, 1);
+      let t0 = performance.now();
+      function tick(t) {
+        const dt = Math.min(0.033, (t - t0) / 1000); // 秒
+        t0 = t;
+
+        applyBrush(dt);
+        stepField(dt);
+        uploadField();
+
+        gl.uniform1f(uTime, t / 1000);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(tick);
+      }
+      setUniforms();
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>

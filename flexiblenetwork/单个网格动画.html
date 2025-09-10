@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>中心弹性方格（2D · 每格可拖 · 内挤压/外扩张 · 最大弹性可调）</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #000;
+        color: #cdd6f4;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .panel {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        z-index: 10;
+        padding: 12px 14px;
+        border: 1px solid #223;
+        border-radius: 12px;
+        background: rgba(10, 16, 24, 0.55);
+        backdrop-filter: blur(6px);
+        font: 12px/1.45 system-ui, -apple-system, Segoe UI, Roboto, PingFang SC,
+          Noto Sans SC, sans-serif;
+        display: grid;
+        gap: 8px;
+        max-width: 360px;
+      }
+      .panel label {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: center;
+      }
+      .panel input[type="range"] {
+        width: 200px;
+      }
+      .panel .row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 8px;
+        align-items: center;
+      }
+      .panel b {
+        color: #a6e3a1;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div class="panel">
+      <div>
+        <b>拖拽说明：</b
+        >从外→内拖会在内侧产生<b>挤压</b>；在内部拖动可<b>局部拉拽每一格</b>；从内→外可<b>外扩</b>；松手自动回弹。
+      </div>
+      <div class="row">
+        <span>最大弹性(像素)</span>
+        <input id="maxPull" type="range" min="40" max="600" step="1" />
+        <span id="maxPullVal"></span>
+      </div>
+    </div>
+    <script>
+      // ======================== 参数 ========================
+      const PARAMS = {
+        grid: 26, // 网格密度（N×N，点是 (N+1)×(N+1)）
+        structK: 180, // 结构弹簧刚度（横/纵）
+        shearKRatio: 0.6, // 对角（剪切）刚度 = structK * ratio，抑制翻面
+        anchorEdgeK: 70, // 边界回弹（到原位）
+        anchorInteriorK: 10, // 内部回弹（轻微，避免整体漂移）
+        damping: 6.0, // 阻尼（全局速度衰减）
+
+        // 拖拽力（条带式压力场，沿最近边法线传播到内部，实现“挤压/外扩”）
+        pullK: 9000, // 条带场基准强度
+        sigmaRatio: 0.2, // 条带沿法线的衰减范围（相对正方形边长）
+
+        // 内部局部拉拽（让“每格可拖”更灵敏）
+        localPullK: 1400, // 本地高斯吸引强度（只在从内部按下时启用）
+        localSigmaRatio: 0.12, // 本地影响半径（相对边长）
+
+        // 小格（白色圆角方块）
+        tileScale: 0.6, // 小格边长占单元格比例（0~1）
+        tileCorner: 0.28, // 圆角相对半边比例（0~0.5 越大越圆）
+
+        // 尺寸
+        squareRatio: 0.62, // 居中正方形相对短边的比例
+        maxPullPx: 160, // 最大弹性位移（像素，限制单点相对原位的最大偏移）
+      };
+
+      // 初始化滑块
+      const inputMaxPull = document.getElementById("maxPull");
+      const maxPullVal = document.getElementById("maxPullVal");
+      inputMaxPull.value = PARAMS.maxPullPx;
+      maxPullVal.textContent = PARAMS.maxPullPx;
+      inputMaxPull.addEventListener("input", () => {
+        PARAMS.maxPullPx = Number(inputMaxPull.value);
+        maxPullVal.textContent = inputMaxPull.value;
+      });
+
+      // ======================== 画布与坐标 ========================
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d");
+      let DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      let W = 0,
+        H = 0,
+        CX = 0,
+        CY = 0,
+        S = 0; // 画布宽高、中心、正方形边长（CSS像素）
+      let LEFT = 0,
+        RIGHT = 0,
+        TOP = 0,
+        BOTTOM = 0; // 正方形四边（CSS像素）
+
+      function fitCanvas() {
+        const { innerWidth: w, innerHeight: h } = window;
+        W = Math.floor(w * DPR);
+        H = Math.floor(h * DPR);
+        canvas.width = W;
+        canvas.height = H;
+        canvas.style.width = w + "px";
+        canvas.style.height = h + "px";
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(DPR, DPR);
+
+        CX = w / 2;
+        CY = h / 2;
+        const side = Math.min(w, h) * PARAMS.squareRatio;
+        S = side;
+        LEFT = CX - S / 2;
+        RIGHT = CX + S / 2;
+        TOP = CY - S / 2;
+        BOTTOM = CY + S / 2;
+
+        buildGrid();
+      }
+
+      // ======================== 网格 & 物理 ========================
+      const N = () => PARAMS.grid; // 单方向分段数（点数 = N+1）
+      const idx = (i, j) => i * (N() + 1) + j; // 2D -> 1D
+
+      let particles = []; // {x,y,vx,vy,pinx,piny,isEdge}  // 注意：存的是 <设备像素> 坐标
+      let springs = []; // {a,b,rest,k}
+
+      function buildGrid() {
+        const n = N();
+        particles = [];
+        springs = [];
+
+        // 生成点（(n+1)×(n+1)）
+        for (let i = 0; i <= n; i++) {
+          for (let j = 0; j <= n; j++) {
+            const u = j / n,
+              v = i / n; // [0,1]
+            const x = (LEFT + u * S) * DPR; // 存储为设备像素，绘制时再换算到 CSS 像素
+            const y = (TOP + v * S) * DPR;
+            const isEdge = i === 0 || i === n || j === 0 || j === n;
+            particles.push({ x, y, vx: 0, vy: 0, pinx: x, piny: y, isEdge });
+          }
+        }
+
+        // 结构弹簧（横向 + 纵向）
+        const k = PARAMS.structK;
+        for (let i = 0; i <= n; i++) {
+          for (let j = 0; j < n; j++) {
+            const a = idx(i, j),
+              b = idx(i, j + 1);
+            const rest = dist2p(particles[a], particles[b]);
+            springs.push({ a, b, rest, k });
+          }
+        }
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j <= n; j++) {
+            const a = idx(i, j),
+              b = idx(i + 1, j);
+            const rest = dist2p(particles[a], particles[b]);
+            springs.push({ a, b, rest, k });
+          }
+        }
+
+        // 剪切弹簧（对角线），抑制格子翻面/撕裂
+        const ks = PARAMS.structK * PARAMS.shearKRatio;
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j < n; j++) {
+            let a = idx(i, j),
+              b = idx(i + 1, j + 1);
+            springs.push({
+              a,
+              b,
+              rest: dist2p(particles[a], particles[b]),
+              k: ks,
+            });
+            a = idx(i + 1, j);
+            b = idx(i, j + 1);
+            springs.push({
+              a,
+              b,
+              rest: dist2p(particles[a], particles[b]),
+              k: ks,
+            });
+          }
+        }
+      }
+
+      function dist2p(p, q) {
+        const dx = q.x - p.x,
+          dy = q.y - p.y;
+        return Math.hypot(dx, dy) || 1e-6;
+      }
+
+      // 帮助：转换为 CSS 像素向量
+      function cssXY(p) {
+        return { x: p.x / DPR, y: p.y / DPR };
+      }
+
+      // ======================== 拖拽逻辑 ========================
+      let pointer = { x: 0, y: 0, down: false, startInside: false, sign: 1 };
+
+      function onPointerDown(e) {
+        const rect = canvas.getBoundingClientRect();
+        pointer.x = e.clientX - rect.left;
+        pointer.y = e.clientY - rect.top;
+        pointer.down = true;
+        pointer.startInside = isInsideSquare(pointer.x, pointer.y);
+        pointer.sign = pointer.startInside ? +1 : -1; // 内部：外扩(+1)；外部：内挤(-1)
+        canvas.setPointerCapture(e.pointerId);
+      }
+      function onPointerMove(e) {
+        const rect = canvas.getBoundingClientRect();
+        pointer.x = e.clientX - rect.left;
+        pointer.y = e.clientY - rect.top;
+      }
+      function onPointerUp() {
+        pointer.down = false;
+      }
+
+      canvas.addEventListener("pointerdown", onPointerDown);
+      canvas.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("resize", fitCanvas);
+
+      function isInsideSquare(x, y) {
+        return x >= LEFT && x <= RIGHT && y >= TOP && y <= BOTTOM;
+      }
+
+      function nearestPointOnSquare(x, y) {
+        // 若在内部：找最近边；在外部：投影/夹取到边界或角
+        const inside = isInsideSquare(x, y);
+        if (inside) {
+          const dl = Math.abs(x - LEFT);
+          const dr = Math.abs(RIGHT - x);
+          const dtp = Math.abs(y - TOP);
+          const db = Math.abs(BOTTOM - y);
+          const m = Math.min(dl, dr, dtp, db);
+          if (m === dl) return { x: LEFT, y };
+          if (m === dr) return { x: RIGHT, y };
+          if (m === dtp) return { x, y: TOP };
+          return { x, y: BOTTOM };
+        } else {
+          const sx = Math.max(LEFT, Math.min(RIGHT, x));
+          const sy = Math.max(TOP, Math.min(BOTTOM, y));
+          return { x: sx, y: sy };
+        }
+      }
+
+      // ======================== 物理步进 ========================
+      const STEP = 1 / 60; // 固定步长
+      let accTime = 0,
+        lastT = performance.now();
+
+      function step(dt) {
+        const pn = particles.length;
+
+        // 力缓存
+        if (!step.fx || step.fx.length !== pn) {
+          step.fx = new Float32Array(pn);
+          step.fy = new Float32Array(pn);
+        }
+        const fx = step.fx;
+        const fy = step.fy;
+        fx.fill(0);
+        fy.fill(0);
+
+        // 回弹（锚点到原位）
+        const ke = PARAMS.anchorEdgeK,
+          ki = PARAMS.anchorInteriorK;
+        for (let i = 0; i < pn; i++) {
+          const p = particles[i];
+          const k = p.isEdge ? ke : ki;
+          fx[i] += (p.pinx - p.x) * k;
+          fy[i] += (p.piny - p.y) * k;
+        }
+
+        // 结构/剪切弹簧
+        for (let s = 0; s < springs.length; s++) {
+          const sp = springs[s];
+          const a = sp.a,
+            b = sp.b;
+          const pa = particles[a],
+            pb = particles[b];
+          let dx = pb.x - pa.x,
+            dy = pb.y - pa.y;
+          const len = Math.hypot(dx, dy) || 1e-6;
+          const rest = sp.rest;
+          const fmag = sp.k * (len - rest);
+          dx /= len;
+          dy /= len; // 单位向量
+          fx[a] += dx * fmag;
+          fy[a] += dy * fmag;
+          fx[b] -= dx * fmag;
+          fy[b] -= dy * fmag;
+        }
+
+        // 拖拽力场
+        if (pointer.down) {
+          // 最近边与法线方向
+          const { x: sx, y: sy } = nearestPointOnSquare(pointer.x, pointer.y);
+          let nx = pointer.x - sx,
+            ny = pointer.y - sy;
+          let L = Math.hypot(nx, ny);
+          if (L > 1e-6) {
+            nx /= L;
+            ny /= L;
+          }
+          const dirx = pointer.sign * nx; // 固定拖拽意图：外按下=外扩(+)，外按下=内挤(-)
+          const diry = pointer.sign * ny;
+
+          // 距离饱和 & 最大弹性
+          const Lc = Math.min(L, PARAMS.maxPullPx);
+          const base =
+            PARAMS.pullK * Math.tanh(Lc / Math.max(1, PARAMS.maxPullPx));
+
+          // 条带式压力：沿最近边法线向内部/外部衰减
+          const sigmaR = S * PARAMS.sigmaRatio; // 法线方向
+          const sigmaT = sigmaR * 0.85; // 切向
+          for (let i = 0; i < pn; i++) {
+            const p = particles[i];
+            const px = p.x / DPR,
+              py = p.y / DPR; // CSS 像素坐标
+            const rx = px - sx,
+              ry = py - sy;
+            const t = rx * nx + ry * ny; // 法线坐标（外为 +）
+            const interior = pointer.startInside ? t : -t; // 统一到“面内为 +”的坐标
+            if (interior >= 0) {
+              const s = rx * -ny + ry * nx; // 切向坐标
+              const wr = Math.exp(
+                -(interior * interior) / (2 * sigmaR * sigmaR)
+              );
+              const wt = Math.exp(-(s * s) / (2 * sigmaT * sigmaT));
+              const w = wr * wt;
+              fx[i] += dirx * base * w * DPR;
+              fy[i] += diry * base * w * DPR;
+            }
+          }
+
+          // 本地高斯拉拽（仅当从内部按下：每格可拖动，更局部）
+          if (pointer.startInside) {
+            const sigmaL = S * PARAMS.localSigmaRatio;
+            const kL = PARAMS.localPullK * (Lc / Math.max(1, PARAMS.maxPullPx));
+            for (let i = 0; i < pn; i++) {
+              const p = particles[i];
+              const px = p.x / DPR,
+                py = p.y / DPR;
+              const dx = pointer.x - px,
+                dy = pointer.y - py;
+              const w = Math.exp(-(dx * dx + dy * dy) / (2 * sigmaL * sigmaL));
+              fx[i] += kL * w * dx * DPR;
+              fy[i] += kL * w * dy * DPR;
+            }
+          }
+        }
+
+        // 速度更新 + 阻尼 + 位置更新 + 最大弹性夹制
+        const damp = Math.exp(-PARAMS.damping * dt);
+        const lim = PARAMS.maxPullPx * DPR;
+        for (let i = 0; i < pn; i++) {
+          const p = particles[i];
+          p.vx = (p.vx + fx[i] * dt) * damp;
+          p.vy = (p.vy + fy[i] * dt) * damp;
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+
+          // 位移上限（相对于原位）
+          const dx0 = p.x - p.pinx,
+            dy0 = p.y - p.piny;
+          const cur = Math.hypot(dx0, dy0);
+          if (cur > lim) {
+            const s = lim / cur;
+            p.x = p.pinx + dx0 * s;
+            p.y = p.piny + dy0 * s;
+            p.vx *= 0.35; // 轻微吸能，避免贴边抖动
+            p.vy *= 0.35;
+          }
+        }
+      }
+
+      // ======================== 绘制 ========================
+      function roundedRect(ctx, x, y, w, h, r) {
+        r = Math.max(0, Math.min(r, Math.min(w, h) * 0.5));
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.arcTo(x + w, y, x + w, y + r, r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+        ctx.lineTo(x + r, y + h);
+        ctx.arcTo(x, y + h, x, y + h - r, r);
+        ctx.lineTo(x, y + r);
+        ctx.arcTo(x, y, x + r, y, r);
+      }
+
+      function draw() {
+        const w = canvas.clientWidth,
+          h = canvas.clientHeight;
+        // 背景（纯 2D 黑）
+        ctx.save();
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+
+        const n = N();
+
+        // 画白色圆角小方块（每个网格单元一个，随网格弹性变形）
+        const scale = PARAMS.tileScale; // 占单元格比例（0~1）
+        const half = scale * 0.5; // 局部坐标中半边长度
+        const rratio = PARAMS.tileCorner; // 圆角半径比例（相对 half）
+
+        ctx.fillStyle = "#fff";
+
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j < n; j++) {
+            const A = cssXY(particles[idx(i, j)]);
+            const B = cssXY(particles[idx(i, j + 1)]);
+            const C = cssXY(particles[idx(i + 1, j + 1)]);
+            const D = cssXY(particles[idx(i + 1, j)]);
+
+            const O = {
+              x: (A.x + B.x + C.x + D.x) / 4,
+              y: (A.y + B.y + C.y + D.y) / 4,
+            };
+            const e1 = {
+              x: (B.x + C.x - A.x - D.x) * 0.5,
+              y: (B.y + C.y - A.y - D.y) * 0.5,
+            };
+            const e2 = {
+              x: (C.x + D.x - A.x - B.x) * 0.5,
+              y: (C.y + D.y - A.y - B.y) * 0.5,
+            };
+
+            // 简单的退化保护：若单元接近翻面，缩减其剪切，避免视觉“翻转”
+            const det = e1.x * e2.y - e1.y * e2.x;
+            if (det <= 0) {
+              const s = 0.5;
+              e1.x *= s;
+              e1.y *= s;
+              e2.x *= s;
+              e2.y *= s;
+            }
+
+            ctx.save();
+            ctx.transform(e1.x, e1.y, e2.x, e2.y, O.x, O.y);
+            ctx.beginPath();
+            roundedRect(ctx, -half, -half, scale, scale, half * rratio);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+      }
+
+      // ======================== 主循环 ========================
+      function loop() {
+        const now = performance.now();
+        let dt = (now - lastT) / 1000;
+        lastT = now;
+        dt = Math.min(dt, 0.033); // 防卡顿爆步长
+        accTime += dt;
+        while (accTime >= STEP) {
+          step(STEP);
+          accTime -= STEP;
+        }
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      // 初始化
+      fitCanvas();
+      lastT = performance.now();
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>
