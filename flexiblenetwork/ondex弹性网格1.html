@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>弹性网格 · 世界域扩展（屏外也有方块）</title>
+  <title>弹性网格 · 世界域扩展（速度驱动 + 首帧消抖）</title>
   <style>
     html,
     body {
@@ -71,6 +71,10 @@
       background: #233043;
       margin: 0 4px;
     }
+
+    .small {
+      opacity: .8;
+    }
   </style>
 </head>
 
@@ -117,6 +121,20 @@
     <label><input id="full9" type="checkbox" /> 全量防裁切（9邻居）</label>
     <label>屏外延伸 <input id="marginP" type="range" min="0" max="4" step="0.25" /><span class="mono"
         id="marginPv"></span>×节距</label>
+    <span class="sep"></span>
+    <!-- 速度驱动 -->
+    <label><input id="useSpeed" type="checkbox" /> 启用速度驱动</label>
+    <label class="small">速度EMA τ <input id="vTau" type="range" min="0" max="0.6" step="0.01" /><span class="mono"
+        id="vTauv"></span>s</label>
+    <label class="small">速度上限 <input id="vMax" type="number" min="10" max="20000" step="10" /><span
+        class="mono">px/s</span></label>
+    <label class="small">当前速度 <span class="mono" id="speedv">0</span> px/s</label>
+    <span class="sep"></span>
+    <label>k系数 <input id="kCoef" type="number" step="0.001" /><span class="small">（k += 系数×速度）</span></label>
+    <label>d系数 <input id="dCoef" type="number" step="0.001" /><span class="small">（d += 系数×速度）</span></label>
+    <label>t系数 <input id="tCoef" type="number" step="0.001" /><span class="small">（t += 系数×速度）</span></label>
+    <label>半径系数 <input id="rCoef" type="number" step="0.01" /><span class="small">（R += 系数×速度）</span></label>
+    <label>力度系数 <input id="fCoef" type="number" step="0.1" /><span class="small">（F += 系数×速度）</span></label>
   </div>
 
   <script>
@@ -140,16 +158,16 @@
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(0, 0, 0, 1);
 
-    /* -------------------- Shader 源码 -------------------- */
+    /* -------------------- Shader 源 -------------------- */
     const vertSrc = `
 attribute vec2 aPos;
 void main(){ gl_Position = vec4(aPos,0.0,1.0); }`;
 
     const fragSrc = `
 precision highp float;
-/* 屏幕窗口尺寸（只用于渲染范围） */
+/* 屏幕窗口尺寸 */
 uniform vec2  uRes;
-/* 世界域尺寸与屏幕偏移：屏幕=世界内的一个窗口 */
+/* 世界域尺寸与屏幕偏移 */
 uniform vec2  uWorld;
 uniform vec2  uWorldOff;
 
@@ -166,12 +184,11 @@ uniform float uNPow;
 uniform float uKFac;
 
 uniform sampler2D uDisp;
-uniform vec2  uFieldSize;   // 位移场网格尺寸（世界域上）
-uniform float uShapeAmp;    // 仅用于等比缩放强度
+uniform vec2  uFieldSize;   // 位移场网格尺寸（世界域）
+uniform float uShapeAmp;    // 等比缩放强度（仅在 uIsoScale=1 时生效）
 uniform float uFull9;       // 0: 5邻居 | 1: 9邻居
 uniform float uIsoScale;    // 0: 只平移 | 1: 平移+等比缩放
 
-/* ---- SDF ---- */
 float sdSuperEllipse(vec2 p, vec2 r, float n){
   p = abs(p) / r;
   float k = pow(pow(p.x, n) + pow(p.y, n), 1.0/n);
@@ -183,7 +200,6 @@ float smin(float a, float b, float k){
   return mix(b, a, h) - hk*h*(1.0 - h);
 }
 
-/* ---- 位移场（世界坐标） ---- */
 vec2 fetchDisp(vec2 ij){
   vec2 uv = (ij + 0.5) / uFieldSize;
   return texture2D(uDisp, uv).xy;
@@ -199,7 +215,7 @@ vec2 sampleDispAtW(vec2 posW){
   return mix(mix(d00,d10,f.x), mix(d01,d11,f.x), f.y);
 }
 
-/* 边界感知的一侧差分（世界边界） */
+/* 边界感知差分（世界边界） */
 mat2 localJacEdgeW(vec2 posW){
   vec2 step = uWorld / max(uFieldSize - 1.0, vec2(1.0));
   vec2 dpx = vec2(step.x, 0.0);
@@ -222,19 +238,16 @@ mat2 localJacEdgeW(vec2 posW){
   else if(top){ ddy = (sampleDispAtW(posW) - sampleDispAtW(pB)) / step.y; }
   else{       ddy = (sampleDispAtW(pT) - sampleDispAtW(pB)) / (2.0*step.y); }
 
-  return mat2(ddx.x, ddy.x, ddx.y, ddy.y); // [du/dx du/dy; dv/dx dv/dy]
+  return mat2(ddx.x, ddy.x, ddx.y, ddy.y);
 }
 
-/* 参考空间取最近格心 + 邻居并集（世界域），仅平移/等比缩放 */
+/* 最近格心 + 邻居并集（世界域），只平移/等比缩放 */
 float sdGridUnion(vec2 frag, vec2 pitch, vec2 anchorW, vec2 r){
-  // 屏幕像素 → 世界坐标
   vec2 fragW = frag + uWorldOff;
-
-  // 最近格心在“无位移参考空间”里判定
   vec2 refW = fragW - sampleDispAtW(fragW);
   vec2 idx0 = floor((refW - anchorW)/pitch + 0.5);
 
-  float best = 1e9;
+  float best = 1.0e9;
   for (int s=0; s<9; ++s){
     vec2 d = vec2(0.0);
     if (s==1) d = vec2( 1.0, 0.0);
@@ -256,7 +269,6 @@ float sdGridUnion(vec2 frag, vec2 pitch, vec2 anchorW, vec2 r){
       float div = J[0][0] + J[1][1];
       float s0 = clamp(1.0 + uShapeAmp * div, 0.5, 2.0);
 
-      // 世界边缘退火
       vec2 stepPix = uWorld / max(uFieldSize - 1.0, vec2(1.0));
       float edgePx = max(0.0, min(min(cW.x, uWorld.x - cW.x), min(cW.y, uWorld.y - cW.y)));
       float edgeFade = max(stepPix.x, stepPix.y) * 2.0;
@@ -264,7 +276,6 @@ float sdGridUnion(vec2 frag, vec2 pitch, vec2 anchorW, vec2 r){
       scale = mix(1.0, s0, m);
     }
 
-    // 只平移 + 等比缩放（无剪切/旋转）
     vec2 p = (fragW - (cW + off)) / scale;
     float di = sdSuperEllipse(p, r, uNPow);
     best = min(best, di);
@@ -284,7 +295,6 @@ void main(){
   float s = (uBreathe > 0.5) ? mix(uMinS, uMaxS, breathe) : uMaxS;
   vec2  r = vec2(0.5 * cellS * s);
 
-  // 锚点在“世界中心”
   vec2 anchor0 = 0.5 * uWorld;
   vec2 anchor1 = anchor0 + 0.5 * pitch;
 
@@ -316,6 +326,9 @@ void main(){
       gl.attachShader(p, vs);
       gl.attachShader(p, fs);
       gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.Link_STATUS)) {
+        // 某些浏览器常量名大小写不同，这里直接用标准常量：
+      }
       if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
         console.error(gl.getProgramInfoLog(p));
         throw new Error(gl.getProgramInfoLog(p) || "link failed");
@@ -394,28 +407,52 @@ void main(){
     const marginP = $("marginP"),
       marginPv = document.getElementById("marginPv");
 
-    const KEY = "grid_world_ext_v1";
+    // 速度驱动控件
+    const useSpeed = $("useSpeed");
+    const vTau = $("vTau"),
+      vTauv = $("vTauv");
+    const vMax = $("vMax");
+    const speedv = $("speedv");
+    const kCoef = $("kCoef"),
+      dCoef = $("dCoef"),
+      tCoef = $("tCoef"),
+      rCoef = $("rCoef"),
+      fCoef = $("fCoef");
+
+    /* 先定义：用于 HUD 的速度值，避免 TDZ */
+    let speedSmoothed = 0; // px/s
+
+    const KEY = "grid_world_ext_speed_v1";
     const defaults = {
       cell: 40,
       gapX: 12,
-      gapY: 13,
+      gapY: 12,
       scale: 1.0,
-      minS: 0.0,
-      maxS: 0.56,
+      minS: 0.9,
+      maxS: 1.0,
       period: 4.0,
       breath: false,
       nPow: 4.0,
       kFac: 0.35,
       shapeAmp: 0.6,
-      springK: 60,
-      damp: 6.0,
-      tension: 56.00,
-      brushR: 240,
-      brushF: 3000,
-      fieldStep: 6,
+      springK: 22,
+      damp: 1.6,
+      tension: 0.9,
+      brushR: 100,
+      brushF: 1200,
+      fieldStep: 12,
       isoScale: false,
       full9: false,
-      marginP: 4.0 // 屏外延伸：1.5×节距
+      marginP: 1.5,
+      // 速度
+      useSpeed: false,
+      vTau: 0.12,
+      vMax: 6000,
+      kCoef: 0.004,
+      dCoef: 0.0008,
+      tCoef: 0.003,
+      rCoef: 0.01,
+      fCoef: 0.8
     };
 
     function loadCfg() {
@@ -449,7 +486,15 @@ void main(){
         fieldStep: +fieldStep.value,
         isoScale: !!isoScale.checked,
         full9: !!full9.checked,
-        marginP: +marginP.value
+        marginP: +marginP.value,
+        useSpeed: !!useSpeed.checked,
+        vTau: +vTau.value,
+        vMax: +vMax.value,
+        kCoef: +kCoef.value,
+        dCoef: +dCoef.value,
+        tCoef: +tCoef.value,
+        rCoef: +rCoef.value,
+        fCoef: +fCoef.value
       };
       localStorage.setItem(KEY, JSON.stringify(cfg));
     }
@@ -470,6 +515,8 @@ void main(){
       brushFv.textContent = (+brushF.value).toFixed(0);
       fieldStepv.textContent = (+fieldStep.value).toFixed(0);
       marginPv.textContent = (+marginP.value).toFixed(2);
+      vTauv.textContent = (+vTau.value).toFixed(2);
+      speedv.textContent = speedSmoothed.toFixed(0);
     }
 
     function setUniforms() {
@@ -522,6 +569,14 @@ void main(){
       isoScale.checked = !!cfg.isoScale;
       full9.checked = !!cfg.full9;
       marginP.value = cfg.marginP;
+      useSpeed.checked = !!cfg.useSpeed;
+      vTau.value = cfg.vTau;
+      vMax.value = cfg.vMax;
+      kCoef.value = cfg.kCoef;
+      dCoef.value = cfg.dCoef;
+      tCoef.value = cfg.tCoef;
+      rCoef.value = cfg.rCoef;
+      fCoef.value = cfg.fCoef;
       syncLabels();
     })();
 
@@ -589,15 +644,14 @@ void main(){
       return 2 * (i + j * field.Nx);
     }
 
-    function stepField(dt) {
+    function stepField(dt, eff) {
       const Nx = field.Nx,
         Ny = field.Ny,
         u = field.u,
         v = field.v;
-      const k = +springK.value,
-        d = +damp.value,
-        T = +tension.value;
-      // 内部点：拉普拉斯
+      const k = eff.k,
+        d = eff.d,
+        T = eff.t;
       for (let j = 1; j < Ny - 1; j++) {
         for (let i = 1; i < Nx - 1; i++) {
           const c = idx(i, j),
@@ -613,7 +667,7 @@ void main(){
           v[c + 1] += ay * dt;
         }
       }
-      // 世界边界：固定为 0（屏外），避免屏幕边缘被“吸住”
+      // 世界边界固定
       for (let i = 0; i < Nx; i++) {
         let c0 = idx(i, 0),
           c1 = idx(i, Ny - 1);
@@ -635,7 +689,7 @@ void main(){
       }
     }
 
-    /* -------------------- 输入（修正 Y 翻转；映射到世界坐标） -------------------- */
+    /* -------------------- 速度与输入（首帧消抖 + EMA） -------------------- */
     const mouse = {
       x: 0,
       y: 0,
@@ -643,8 +697,8 @@ void main(){
       py: 0,
       vx: 0,
       vy: 0,
-      down: false,
-      in: true
+      in: true,
+      initialized: false
     };
     addEventListener("pointermove", (e) => {
       const rect = canvas.getBoundingClientRect();
@@ -655,26 +709,76 @@ void main(){
     });
     addEventListener("pointerenter", () => mouse.in = true);
     addEventListener("pointerleave", () => mouse.in = false);
-    addEventListener("pointerdown", () => mouse.down = true);
-    addEventListener("pointerup", () => mouse.down = false);
 
-    function applyBrush(dt) {
+    function computeEffective(dt) {
+      // 首帧消抖
+      if (!mouse.initialized) {
+        mouse.px = mouse.x;
+        mouse.py = mouse.y;
+        mouse.vx = 0;
+        mouse.vy = 0;
+        mouse.initialized = true;
+      }
       const vx = (mouse.x - mouse.px) / Math.max(dt, 1e-4);
       const vy = (mouse.y - mouse.py) / Math.max(dt, 1e-4);
       mouse.vx = vx;
       mouse.vy = vy;
       mouse.px = mouse.x;
       mouse.py = mouse.y;
+
+      // 速度标量（EMA）
+      const vInst = Math.hypot(vx, vy);
+      const vmax = Math.max(10, +vMax.value);
+      const vClamped = Math.min(vInst, vmax);
+      const tau = Math.max(0, +vTau.value);
+      const alpha = tau > 0 ? Math.min(1, dt / (tau + 1e-6)) : 1;
+      speedSmoothed = (1 - alpha) * speedSmoothed + alpha * vClamped;
+
+      const use = !!useSpeed.checked;
+      const k0 = +springK.value,
+        d0 = +damp.value,
+        t0 = +tension.value;
+      const R0 = +brushR.value,
+        F0 = +brushF.value;
+
+      let k = k0,
+        d = d0,
+        t = t0,
+        R = R0,
+        F = F0;
+      if (use) {
+        k = k0 + (+kCoef.value) * speedSmoothed;
+        d = d0 + (+dCoef.value) * speedSmoothed;
+        t = t0 + (+tCoef.value) * speedSmoothed;
+        R = R0 + (+rCoef.value) * speedSmoothed;
+        F = F0 + (+fCoef.value) * speedSmoothed;
+      }
+      // 夹紧到 UI 范围
+      k = Math.min(60, Math.max(2, k));
+      d = Math.min(6, Math.max(0, d));
+      t = Math.min(56, Math.max(0, t));
+      R = Math.min(240, Math.max(10, R));
+      F = Math.min(3000, Math.max(50, F));
+
+      return {
+        k,
+        d,
+        t,
+        R,
+        F
+      };
+    }
+
+    function applyBrush(dt, eff) {
       if (!mouse.in) return;
 
-      const R = +brushR.value,
-        F = +brushF.value;
+      const R = eff.R,
+        F = eff.F;
       const Nx = field.Nx,
         Ny = field.Ny,
         hx = field.hx,
         hy = field.hy;
 
-      // 屏幕 → 世界
       const xw = mouse.x + field.padPx;
       const yw = mouse.y + field.padPx;
 
@@ -692,8 +796,8 @@ void main(){
           if (r2 > R * R) continue;
           const w = Math.pow(1.0 - r2 / (R * R), 2.0);
           const c = idx(i, j);
-          field.v[c] += (F * vx * w * dt) / 1000.0;
-          field.v[c + 1] += (F * vy * w * dt) / 1000.0;
+          field.v[c] += (F * mouse.vx * w * dt) / 1000.0;
+          field.v[c + 1] += (F * mouse.vy * w * dt) / 1000.0;
         }
       }
     }
@@ -719,18 +823,22 @@ void main(){
     }
 
     /* -------------------- 尺寸与主循环 -------------------- */
-    function resize() {
+    function setCanvasSize() {
       const dpr = Math.min(devicePixelRatio || 1, 2);
       canvas.width = Math.floor(innerWidth * dpr);
       canvas.height = Math.floor(innerHeight * dpr);
       gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+
+    function resize() {
+      setCanvasSize();
       initField();
       setUniforms();
     }
 
     const reinitTriggers = new Set([cell, gapX, gapY, scale, fieldStep, marginP]);
     const uiInputs = [cell, gapX, gapY, scale, minS, maxS, period, breath, nPow, kFac, shapeAmp, springK, damp, tension,
-      brushR, brushF, fieldStep, isoScale, full9, marginP
+      brushR, brushF, fieldStep, isoScale, full9, marginP, useSpeed, vTau, vMax, kCoef, dCoef, tCoef, rCoef, fCoef
     ];
     uiInputs.forEach(e => {
       e.addEventListener("input", () => {
@@ -745,7 +853,9 @@ void main(){
 
     resize();
     syncAll();
-    addEventListener("resize", resize, {
+    addEventListener("resize", () => {
+      resize();
+    }, {
       passive: true
     });
 
@@ -755,12 +865,17 @@ void main(){
       const dt = Math.min(0.033, (t - t0) / 1000);
       t0 = t;
 
-      applyBrush(dt);
-      stepField(dt);
+      const eff = computeEffective(dt);
+      applyBrush(dt, eff);
+      stepField(dt, eff);
       uploadField();
 
       gl.uniform1f(uTime, t / 1000);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      // HUD 数值
+      syncLabels();
+
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);

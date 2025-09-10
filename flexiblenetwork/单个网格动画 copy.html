@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>圆角方块 · 接触点尖锐凹陷/鼓包 + 局部弹性回弹</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: #0b0f14;
+      color: #cdd6f4
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block
+    }
+
+    .ui {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      z-index: 5;
+      display: grid;
+      gap: 8px;
+      grid-auto-rows: min-content;
+      padding: 12px;
+      border: 1px solid #1f2733;
+      border-radius: 12px;
+      background: rgba(16, 24, 36, .6);
+      font: 12px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center
+    }
+
+    .row label {
+      min-width: 110px;
+      opacity: .85
+    }
+
+    .row input[type=range] {
+      width: 220px
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="ui">
+    <div class="row"><label>回弹速度 ω</label><input id="omega" type="range" min="4" max="24" step="0.1" value="12"><span
+        id="omegaV">12</span></div>
+    <div class="row"><label>阻尼 ζ</label><input id="zeta" type="range" min="0.1" max="1.2" step="0.01" value="0.62"><span
+        id="zetaV">0.62</span></div>
+    <div class="row"><label>局部范围 σ(像素)</label><input id="sigma" type="range" min="6" max="80" step="1" value="32"><span
+        id="sigmaV">32</span></div>
+    <div class="row"><label>强度映射</label><input id="imp" type="range" min="0.004" max="0.05" step="0.001"
+        value="0.014"><span id="impV">0.014</span></div>
+    <div class="row"><label>最大冲量 Jmax</label><input id="jmax" type="range" min="6" max="80" step="1" value="36"><span
+        id="jmaxV">36</span></div>
+  </div>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById('c');
+      const ctx = canvas.getContext('2d');
+
+      const ui = {
+        omega: document.getElementById('omega'),
+        zeta: document.getElementById('zeta'),
+        sigma: document.getElementById('sigma'),
+        imp: document.getElementById('imp'),
+        jmax: document.getElementById('jmax'),
+        omegaV: document.getElementById('omegaV'),
+        zetaV: document.getElementById('zetaV'),
+        sigmaV: document.getElementById('sigmaV'),
+        impV: document.getElementById('impV'),
+        jmaxV: document.getElementById('jmaxV'),
+      };
+      const upd = () => {
+        spring.omega = +ui.omega.value;
+        spring.zeta = +ui.zeta.value;
+        field.sigma = +ui.sigma.value;
+        impulses.impulseScale = +ui.imp.value;
+        impulses.Jmax = +ui.jmax.value;
+        ui.omegaV.textContent = spring.omega.toFixed(2);
+        ui.zetaV.textContent = spring.zeta.toFixed(2);
+        ui.sigmaV.textContent = field.sigma.toFixed(0);
+        ui.impV.textContent = impulses.impulseScale.toFixed(3);
+        ui.jmaxV.textContent = impulses.Jmax.toFixed(0);
+      };
+      ui.omega.oninput = upd;
+      ui.zeta.oninput = upd;
+      ui.sigma.oninput = upd;
+      ui.imp.oninput = upd;
+      ui.jmax.oninput = upd;
+
+      const state = {
+        w: 0,
+        h: 0,
+        dpr: Math.max(1, window.devicePixelRatio || 1)
+      };
+
+      function resize() {
+        state.w = window.innerWidth | 0;
+        state.h = window.innerHeight | 0;
+        canvas.width = (state.w * state.dpr) | 0;
+        canvas.height = (state.h * state.dpr) | 0;
+        canvas.style.width = state.w + 'px';
+        canvas.style.height = state.h + 'px';
+        ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      }
+      window.addEventListener('resize', resize, {
+        passive: true
+      });
+      resize();
+
+      // ==== 基础几何 ====
+      const BOX = {
+        cx: () => state.w / 2,
+        cy: () => state.h / 2,
+        w: 100,
+        h: 100,
+        r: 16,
+        edgeSamples: 28,
+        arcSamples: 20
+      };
+
+      // 将圆角矩形离散成一圈点（包含法线 & 累积弧长）
+      function sampleRoundRect(w, h, r, edgeS, arcS) {
+        const P = [];
+        const hw = w / 2,
+          hh = h / 2;
+        r = Math.min(r, hw, hh);
+        let L = 0;
+        const push = (x, y, nx, ny) => {
+          P.push({
+            x,
+            y,
+            nx,
+            ny,
+            s: 0
+          });
+        };
+        // 顶边 (-hw+r,-hh) -> (hw-r,-hh)
+        for (let i = 0; i <= edgeS; i++) {
+          const t = i / edgeS;
+          const x = lerp(-hw + r, hw - r, t),
+            y = -hh;
+          push(x, y, 0, -1);
+        }
+        // 右上角
+        {
+          const cx = hw - r,
+            cy = -hh + r;
+          for (let i = 1; i <= arcS; i++) {
+            const t = i / arcS,
+              a = lerp(-Math.PI / 2, 0, t);
+            const nx = Math.cos(a),
+              ny = Math.sin(a);
+            push(cx + r * nx, cy + r * ny, nx, ny);
+          }
+        }
+        // 右边
+        for (let i = 1; i <= edgeS; i++) {
+          const t = i / edgeS;
+          const y = lerp(-hh + r, hh - r, t);
+          push(hw, y, 1, 0);
+        }
+        // 右下角
+        {
+          const cx = hw - r,
+            cy = hh - r;
+          for (let i = 1; i <= arcS; i++) {
+            const t = i / arcS,
+              a = lerp(0, Math.PI / 2, t);
+            const nx = Math.cos(a),
+              ny = Math.sin(a);
+            push(cx + r * nx, cy + r * ny, nx, ny);
+          }
+        }
+        // 底边
+        for (let i = 1; i <= edgeS; i++) {
+          const t = i / edgeS;
+          const x = lerp(hw - r, -hw + r, t);
+          push(x, hh, 0, 1);
+        }
+        // 左下角
+        {
+          const cx = -hw + r,
+            cy = hh - r;
+          for (let i = 1; i <= arcS; i++) {
+            const t = i / arcS,
+              a = lerp(Math.PI / 2, Math.PI, t);
+            const nx = Math.cos(a),
+              ny = Math.sin(a);
+            push(cx + r * nx, cy + r * ny, nx, ny);
+          }
+        }
+        // 左边
+        for (let i = 1; i <= edgeS; i++) {
+          const t = i / edgeS;
+          const y = lerp(hh - r, -hh + r, t);
+          push(-hw, y, -1, 0);
+        }
+        // 左上角
+        {
+          const cx = -hw + r,
+            cy = -hh + r;
+          for (let i = 1; i <= arcS; i++) {
+            const t = i / arcS,
+              a = lerp(Math.PI, 3 * Math.PI / 2, t);
+            const nx = Math.cos(a),
+              ny = Math.sin(a);
+            push(cx + r * nx, cy + r * ny, nx, ny);
+          }
+        }
+        // 累积弧长
+        for (let i = 0; i < P.length; i++) {
+          const a = P[i],
+            b = P[(i + 1) % P.length];
+          const ds = Math.hypot(b.x - a.x, b.y - a.y);
+          L += ds;
+          a.s = L; // 临时存
+        }
+        // 归一化 s到[0,1)
+        for (let i = 0; i < P.length; i++) {
+          P[i].s /= L;
+        }
+        P.perimeter = L;
+        return P;
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+      // 形变字段：每个采样点一个弹簧
+      const geom = sampleRoundRect(BOX.w, BOX.h, BOX.r, BOX.edgeSamples, BOX.arcSamples);
+      const N = geom.length;
+      const field = {
+        x: new Float32Array(N), // 位移
+        v: new Float32Array(N), // 速度
+        sigma: 32 // 冲量沿周长扩散的局部尺度（像素）
+      };
+
+      // 弹簧参数
+      const spring = {
+        omega: 12.0,
+        zeta: 0.62
+      };
+
+      // 冲量映射
+      const impulses = {
+        impulseScale: 0.014, // px/s -> 冲量
+        Jmax: 36
+      };
+
+      // 鼠标
+      const mouse = {
+        x: 0,
+        y: 0,
+        px: 0,
+        py: 0,
+        t: performance.now(),
+        inside: false,
+        wasInside: false
+      };
+
+      // 将屏幕坐标转换到局部(以方块中心为原点)
+      function toLocal(mx, my) {
+        return {
+          x: mx - BOX.cx(),
+          y: my - BOX.cy()
+        };
+      }
+
+      // 判断点是否在“基础圆角矩形”内（未形变的）
+      function pointInRoundRect(localX, localY, w, h, r) {
+        const hw = w / 2,
+          hh = h / 2;
+        const rx = clamp(localX, -hw + r, hw - r);
+        const ry = clamp(localY, -hh + r, hh - r);
+        const dx = localX - rx;
+        const dy = localY - ry;
+        if (Math.abs(localX) <= hw - r || Math.abs(localY) <= hh - r) {
+          // 在直边投影区
+          return (Math.abs(localX) <= hw && Math.abs(localY) <= hh);
+        } else {
+          // 在圆角投影区：与圆心距离判断
+          return (dx * dx + dy * dy) <= r * r;
+        }
+      }
+
+      // 求“基础圆角矩形”的最近边界点 & 外法线（用于确定接触点、方向）
+      function closestOnRoundRect(localX, localY, w, h, r) {
+        const hw = w / 2,
+          hh = h / 2;
+        // 先投影到内缩矩形（直边段），再根据与圆角区判断
+        const rx = clamp(localX, -hw + r, hw - r);
+        const ry = clamp(localY, -hh + r, hh - r);
+        const inCore = (rx === localX || ry === localY); // 是否落在直边投影区
+
+        let cx, cy, nx, ny;
+        if (inCore) {
+          // 落在某条直边的法线外延上
+          // 判定哪条边更“近”
+          const dxL = Math.abs(localX + hw);
+          const dxR = Math.abs(hw - localX);
+          const dyT = Math.abs(localY + hh);
+          const dyB = Math.abs(hh - localY);
+          const m = Math.min(dxL, dxR, dyT, dyB);
+          if (m === dxL) {
+            cx = -hw;
+            cy = ry;
+            nx = -1;
+            ny = 0;
+          } else if (m === dxR) {
+            cx = hw;
+            cy = ry;
+            nx = 1;
+            ny = 0;
+          } else if (m === dyT) {
+            cx = rx;
+            cy = -hh;
+            nx = 0;
+            ny = -1;
+          } else {
+            cx = rx;
+            cy = hh;
+            nx = 0;
+            ny = 1;
+          }
+        } else {
+          // 在圆角象限：投影到相应圆角
+          const signX = (localX > 0) ? 1 : -1,
+            signY = (localY > 0) ? 1 : -1;
+          const ccx = signX * (hw - r),
+            ccy = signY * (hh - r); // 圆心
+          const vx = localX - ccx,
+            vy = localY - ccy;
+          const len = Math.hypot(vx, vy) || 1;
+          nx = vx / len;
+          ny = vy / len;
+          cx = ccx + nx * r;
+          cy = ccy + ny * r;
+        }
+        return {
+          x: cx,
+          y: cy,
+          nx,
+          ny
+        };
+      }
+
+      // 找到最接近某局部点的“轮廓采样索引”
+      function nearestSampleIndex(px, py) {
+        let idx = 0,
+          best = 1e9;
+        for (let i = 0; i < N; i++) {
+          const d = (geom[i].x - px) ** 2 + (geom[i].y - py) ** 2;
+          if (d < best) {
+            best = d;
+            idx = i;
+          }
+        }
+        return idx;
+      }
+
+      // 沿“周长索引空间”的高斯权重（环形）
+      function gaussianOnLoop(centerIdx, sigmaPx) {
+        // sigmaPx 是以“物理像素弧长”为尺度，需要换算成“索引步数”
+        // 估算：平均每段弧长
+        const avgSeg = (geom.perimeter / N);
+        const sigmaIdx = Math.max(1, sigmaPx / avgSeg);
+        const w = new Float32Array(N);
+        for (let i = 0; i < N; i++) {
+          // 环距离
+          let di = Math.abs(i - centerIdx);
+          di = Math.min(di, N - di);
+          const g = Math.exp(-(di * di) / (2 * sigmaIdx * sigmaIdx));
+          w[i] = g;
+        }
+        return w;
+      }
+
+      // 施加“接触点”冲量到形变场（局部扩散）
+      function applyImpulseAt(contact, J) {
+        const idx = nearestSampleIndex(contact.x, contact.y);
+        const W = gaussianOnLoop(idx, field.sigma);
+        for (let i = 0; i < N; i++) {
+          // 速度增量 = 冲量 × 法线与接触法线的对齐程度（让能量主要沿接触法线方向）
+          const align = geom[i].nx * contact.nx + geom[i].ny * contact.ny; // [-1,1]
+          field.v[i] += J * W[i] * Math.max(0, align); // 只推动“同向”的点，保持尖尖的局部性
+        }
+      }
+
+      // 质心锁定（抵消形变导致的整体平移）
+      function lockCentroid(displaced) {
+        let dx = 0,
+          dy = 0;
+        for (let i = 0; i < N; i++) {
+          dx += (displaced[i].x - geom[i].x);
+          dy += (displaced[i].y - geom[i].y);
+        }
+        dx /= N;
+        dy /= N;
+        for (let i = 0; i < N; i++) {
+          displaced[i].x -= dx;
+          displaced[i].y -= dy;
+        }
+      }
+
+      // 主绘制
+      function draw() {
+        const cx = BOX.cx(),
+          cy = BOX.cy();
+        ctx.clearRect(0, 0, state.w, state.h);
+
+        // 更新 + 生成位移后轮廓
+        const displaced = new Array(N);
+        for (let i = 0; i < N; i++) {
+          displaced[i] = {
+            x: geom[i].x + geom[i].nx * field.x[i],
+            y: geom[i].y + geom[i].ny * field.x[i]
+          };
+        }
+        lockCentroid(displaced);
+
+        // 投影到屏幕
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        // 柔和阴影（可注释）
+        ctx.fillStyle = 'rgba(0,0,0,.18)';
+        ctx.beginPath();
+        for (let i = 0; i < N; i++) {
+          const p = displaced[i];
+          if (i === 0) ctx.moveTo(p.x + 2, p.y + 4);
+          else ctx.lineTo(p.x + 2, p.y + 4);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // 实体
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        for (let i = 0; i < N; i++) {
+          const p = displaced[i];
+          if (i === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      // 主循环
+      let last = performance.now();
+
+      function loop(now) {
+        const dt = Math.min(0.033, (now - last) * 0.001);
+        last = now;
+
+        // 形变(弹簧-阻尼)积分
+        const ω = spring.omega,
+          ζ = spring.zeta;
+        const k = ω * ω,
+          c = 2 * ζ * ω;
+        for (let i = 0; i < N; i++) {
+          const a = -k * field.x[i] - c * field.v[i];
+          field.v[i] += a * dt;
+          field.x[i] += field.v[i] * dt;
+          // 限幅（防爆）
+          field.x[i] = clamp(field.x[i], -80, 80);
+          field.v[i] = clamp(field.v[i], -4000, 4000);
+        }
+
+        draw();
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+
+      // 鼠标事件：穿越边界时打“冲量”
+      function onMove(e) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left,
+          my = e.clientY - rect.top;
+        const t = performance.now();
+        const dt = Math.max(1 / 120, (t - mouse.t) * 0.001);
+        const vx = (mx - mouse.px) / dt;
+        const vy = (my - mouse.py) / dt;
+        const spd = Math.hypot(vx, vy);
+
+        const L = toLocal(mx, my);
+        const inside = pointInRoundRect(L.x, L.y, BOX.w, BOX.h, BOX.r);
+
+        // 只有“穿越边界”的瞬间施加冲量：外->内(凹入)、内->外(鼓出)
+        if (inside !== mouse.wasInside) {
+          // 接触点与外法线
+          const hit = closestOnRoundRect(L.x, L.y, BOX.w, BOX.h, BOX.r);
+
+          // 与“向内方向”的对齐（速度 vs (-法线)），决定有效分量
+          const vlen = spd || 1;
+          const ux = vx / vlen,
+            uy = vy / vlen;
+          const approach = (ux * -hit.nx + uy * -hit.ny); // >0 表示朝内撞击
+
+          // 速度->冲量映射
+          let J = clamp(spd * impulses.impulseScale, 0, impulses.Jmax);
+
+          if (inside && !mouse.wasInside) {
+            // 外 -> 内 ：凹陷（J取负，且看是否真的朝内）
+            J *= Math.max(0, approach);
+            J = -J;
+          } else if (!inside && mouse.wasInside) {
+            // 内 -> 外 ：鼓包（带出）
+            // 与“朝外的速度分量”对齐：即 approach_out = -approach
+            J *= Math.max(0, -approach);
+            // outward => 正 J（同外法线）
+          } else {
+            J = 0;
+          }
+
+          if (Math.abs(J) > 0) {
+            applyImpulseAt(hit, J);
+          }
+        }
+
+        // 更新鼠标历史
+        mouse.px = mx;
+        mouse.py = my;
+        mouse.t = t;
+        mouse.wasInside = inside;
+      }
+      window.addEventListener('mousemove', onMove, {
+        passive: true
+      });
+
+      // 初始化数值
+      (function initMouse() {
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = mouse.px = rect.left + state.w / 2;
+        mouse.y = mouse.py = rect.top + state.h / 2;
+        mouse.t = performance.now();
+        mouse.wasInside = false;
+      })();
+
+      // 首次同步 UI
+      upd();
+    })();
+  </script>
+</body>
+
+</html>
