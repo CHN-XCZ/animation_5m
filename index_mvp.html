@@ -73,8 +73,19 @@
   </head>
   <body>
     <canvas id="c"></canvas>
-
     <div class="ui">
+      <label
+        >呼吸模式
+        <select id="bMode">
+          <option value="0">全局</option>
+          <option value="1">分相</option>
+          <option value="2" selected>扫波</option>
+          <option value="3">噪声</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="ui" style="display: none">
       <!-- 基础 -->
       <label
         >格子边长
