@@ -1,0 +1,1808 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>弹性网格 · 持久透镜(仅Logo) + 速度反比阻尼 · 模式2/3呼吸</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #000;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .ui {
+        position: fixed;
+        left: 14px;
+        top: 14px;
+        z-index: 5;
+        color: #cdd6f4;
+        font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
+          "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          sans-serif;
+        background: #0b0f14cc;
+        border: 1px solid #1c2636;
+        border-radius: 12px;
+        padding: 10px 12px;
+        backdrop-filter: blur(6px);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        max-width: min(96vw, 1700px);
+      }
+      .ui label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+      .ui input[type="range"] {
+        width: 140px;
+      }
+      .ui input[type="number"],
+      .ui select {
+        width: 76px;
+        padding: 4px 6px;
+        border-radius: 8px;
+        border: 1px solid #1c2636;
+        background: #0b0f14;
+        color: #cdd6f4;
+      }
+      .mono {
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+      }
+      .sep {
+        width: 1px;
+        height: 18px;
+        background: #233043;
+        margin: 0 4px;
+      }
+      .small {
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <div class="ui">
+      <!-- 基础 -->
+      <label
+        >格子边长
+        <input id="cell" type="range" min="12" max="120" step="1" /><span
+          class="mono"
+          id="cellv"
+        ></span>
+        px</label
+      >
+      <label
+        >横间隔
+        <input id="gapX" type="number" min="0" max="240" step="1" /><span
+          class="mono"
+          >px</span
+        ></label
+      >
+      <label
+        >纵间隔
+        <input id="gapY" type="number" min="0" max="240" step="1" /><span
+          class="mono"
+          >px</span
+        ></label
+      >
+      <label
+        >比例
+        <input id="scale" type="range" min="0.25" max="3" step="0.01" /><span
+          class="mono"
+          id="scalev"
+        ></span>
+        ×</label
+      >
+      <label
+        >最小（0~1）
+        <input id="minS" type="range" min="0" max="1" step="0.01" /><span
+          class="mono"
+          id="minSv"
+        ></span
+      ></label>
+      <label
+        >最大（0~2）
+        <input id="maxS" type="range" min="0" max="2" step="0.01" /><span
+          class="mono"
+          id="maxSv"
+        ></span
+      ></label>
+      <label
+        >呼吸时长
+        <input id="period" type="range" min="1.5" max="10" step="0.1" /><span
+          class="mono"
+          id="periodv"
+        ></span>
+        s</label
+      >
+      <label><input id="breath" type="checkbox" /> 开启呼吸</label>
+      <label
+        >圆角 n
+        <input id="nPow" type="range" min="2" max="12" step="0.1" /><span
+          class="mono"
+          id="nPowv"
+        ></span
+      ></label>
+      <label
+        >粘连 k（0~1·节距比）
+        <input id="kFac" type="range" min="0" max="0.7" step="0.01" /><span
+          class="mono"
+          id="kFacv"
+        ></span
+      ></label>
+      <span class="sep"></span>
+
+      <!-- 呼吸模式（新增） -->
+      <label
+        >呼吸模式
+        <select id="bMode">
+          <option value="0">全局</option>
+          <option value="1">分相</option>
+          <option value="2" selected>扫波</option>
+          <option value="3">噪声</option>
+        </select>
+      </label>
+      <label class="small"
+        >相位抖动
+        <input id="phaseJit" type="range" min="0" max="1" step="0.01" /><span
+          class="mono"
+          id="phaseJitv"
+        ></span
+      ></label>
+      <label class="small"
+        >扫波角度°
+        <input id="waveDeg" type="range" min="0" max="360" step="1" /><span
+          class="mono"
+          id="waveDegv"
+        ></span
+      ></label>
+      <label class="small"
+        >波长(格)
+        <input id="waveLenU" type="range" min="1" max="50" step="1" /><span
+          class="mono"
+          id="waveLenUv"
+        ></span
+      ></label>
+      <label class="small"
+        >噪声尺度(格)
+        <input id="noiseScaleU" type="range" min="1" max="40" step="1" /><span
+          class="mono"
+          id="noiseScaleUv"
+        ></span
+      ></label>
+      <label class="small"
+        >噪声速度(格/s)
+        <input id="noiseSpeedU" type="range" min="0" max="5" step="0.01" /><span
+          class="mono"
+          id="noiseSpeedUv"
+        ></span
+      ></label>
+      <label class="small"
+        >噪声角度°
+        <input id="noiseDeg" type="range" min="0" max="360" step="1" /><span
+          class="mono"
+          id="noiseDegv"
+        ></span
+      ></label>
+      <label class="small"
+        >噪声阶数
+        <input id="noiseOct" type="range" min="1" max="4" step="1" /><span
+          class="mono"
+          id="noiseOctv"
+        ></span
+      ></label>
+
+      <span class="sep"></span>
+
+      <!-- 物理/形变 -->
+      <label
+        >形变强度
+        <input id="shapeAmp" type="range" min="0" max="1.2" step="0.01" /><span
+          class="mono"
+          id="shapeAmpv"
+        ></span
+      ></label>
+      <label
+        >弹性k
+        <input id="springK" type="range" min="2" max="60" step="1" /><span
+          class="mono"
+          id="springKv"
+        ></span
+      ></label>
+      <label
+        >阻尼d
+        <input id="damp" type="range" min="0" max="6.6" step="0.05" /><span
+          class="mono"
+          id="dampv"
+        ></span
+      ></label>
+      <label
+        >张力t
+        <input id="tension" type="range" min="0" max="56" step="0.05" /><span
+          class="mono"
+          id="tensionv"
+        ></span
+      ></label>
+      <label
+        >笔刷半径
+        <input id="brushR" type="range" min="10" max="240" step="1" /><span
+          class="mono"
+          id="brushRv"
+        ></span>
+        px</label
+      >
+      <label
+        >笔刷力度
+        <input id="brushF" type="range" min="50" max="3000" step="10" /><span
+          class="mono"
+          id="brushFv"
+        ></span
+      ></label>
+      <label
+        >场步长
+        <input id="fieldStep" type="range" min="6" max="32" step="1" /><span
+          class="mono"
+          id="fieldStepv"
+        ></span>
+        px</label
+      >
+      <span class="sep"></span>
+
+      <!-- 行为 -->
+      <label><input id="isoScale" type="checkbox" /> 各向同性缩放</label>
+      <label><input id="full9" type="checkbox" /> 全量防裁切（9邻居）</label>
+      <label
+        >屏外延伸
+        <input id="marginP" type="range" min="0" max="4" step="0.25" /><span
+          class="mono"
+          id="marginPv"
+        ></span>
+        ×节距</label
+      >
+      <span class="sep"></span>
+
+      <!-- 速度驱动 -->
+      <label><input id="useSpeed" type="checkbox" /> 启用速度驱动</label>
+      <label class="small"
+        >速度EMA τ
+        <input id="vTau" type="range" min="0" max="0.6" step="0.01" /><span
+          class="mono"
+          id="vTauv"
+        ></span>
+        s</label
+      >
+      <label class="small"
+        >速度上限
+        <input id="vMax" type="number" min="10" max="20000" step="10" /><span
+          class="mono"
+          >px/s</span
+        ></label
+      >
+      <label class="small"
+        >当前速度 <span class="mono" id="speedv">0</span> px/s</label
+      >
+      <label
+        >k系数 <input id="kCoef" type="number" step="0.001" /><span
+          class="small"
+          >k += 系数×速度</span
+        ></label
+      >
+      <label
+        >d系数 <input id="dCoef" type="number" step="0.001" /><span
+          class="small"
+          >d = d0 / (1 + 系数×速度)</span
+        ></label
+      >
+      <label
+        >t系数 <input id="tCoef" type="number" step="0.001" /><span
+          class="small"
+          >t += 系数×速度</span
+        ></label
+      >
+      <label
+        >半径系数 <input id="rCoef" type="number" step="0.01" /><span
+          class="small"
+          >R += 系数×速度</span
+        ></label
+      >
+      <label
+        >力度系数 <input id="fCoef" type="number" step="0.1" /><span
+          class="small"
+          >F += 系数×速度</span
+        ></label
+      >
+      <span class="sep"></span>
+
+      <!-- 放大（线性恢复 + 速度闸门） -->
+      <label
+        >最大放大
+        <input id="inflMax" type="range" min="0" max="1.5" step="0.01" /><span
+          class="mono"
+          id="inflMaxv"
+        ></span>
+        ×</label
+      >
+      <label
+        >放大响应
+        <input id="inflResp" type="range" min="0" max="3" step="0.01" /><span
+          class="mono"
+          id="inflRespv"
+        ></span
+      ></label>
+      <label
+        >放大恢复速率
+        <input id="inflDecay" type="range" min="0" max="4" step="0.01" /><span
+          class="mono"
+          id="inflDecayv"
+        ></span>
+        /s</label
+      >
+      <label
+        >放大速度参考 vRef
+        <input
+          id="inflVRef"
+          type="number"
+          min="50"
+          max="20000"
+          step="10"
+        /><span class="mono">px/s</span></label
+      >
+      <label
+        >速度阈值 vDead
+        <input id="inflVDead" type="number" min="0" max="2000" step="10" /><span
+          class="mono"
+          >px/s</span
+        ></label
+      >
+      <span class="sep"></span>
+
+      <!-- 位移上限 + 重入消抖 -->
+      <label
+        >位移上限·基值
+        <input id="capBase" type="range" min="0" max="2" step="0.01" /><span
+          class="mono"
+          id="capBasev"
+        ></span>
+        ×节距</label
+      >
+      <label
+        >位移上限·速度系数
+        <input id="capK" type="range" min="0" max="3" step="0.01" /><span
+          class="mono"
+          id="capKv"
+        ></span
+      ></label>
+      <label
+        >重入消抖
+        <input id="reentryMs" type="number" min="0" max="1000" step="10" /><span
+          class="mono"
+          >ms</span
+        ></label
+      >
+
+      <!-- Logo 独立呼吸 -->
+      <span class="sep"></span>
+      <label
+        >Logo最小 ×
+        <input id="logoMinS" type="range" min="0" max="2" step="0.01" /><span
+          class="mono"
+          id="logoMinSv"
+        ></span
+      ></label>
+      <label
+        >Logo最大 ×
+        <input id="logoMaxS" type="range" min="0" max="2" step="0.01" /><span
+          class="mono"
+          id="logoMaxSv"
+        ></span
+      ></label>
+
+      <!-- 透镜柔边（保留） -->
+      <span class="sep"></span>
+      <label
+        >透镜柔边
+        <input
+          id="lensFeather"
+          type="range"
+          min="0"
+          max="0.6"
+          step="0.01"
+        /><span class="mono" id="lensFeatherv"></span> ×R</label
+      >
+    </div>
+
+    <script>
+      /* ---------------- GL 公共 SDF（小格） + 呼吸模式 ---------------- */
+      const FRAG_GRID_COMMON = `
+precision highp float;
+uniform vec2  uRes, uWorld, uWorldOff;
+uniform float uTime, uCell, uScale, uMinS, uMaxS, uPeriod, uBreathe, uAA, uNPow, uKFac;
+uniform vec2  uGap;
+uniform sampler2D uDisp;     // RG:位移, B:放大量, A:透镜持久遮罩
+uniform vec2  uFieldSize;
+uniform float uShapeAmp, uFull9, uIsoScale, uInflMax;
+
+/* 呼吸模式参数（新增） */
+uniform float uBMode;     // 0=全局,1=分相,2=扫波,3=噪声
+uniform vec2  uWaveDir;   // 模式2：方向（单位向量）
+uniform float uWaveK;     // 模式2：波数 = 2π/波长(格)
+uniform float uPhaseJit;  // 模式1：相位抖动(0..1)
+uniform vec2  uNoiseDir;  // 模式3：噪声流动方向（单位向量）
+uniform float uNoiseScale;// 模式3：噪声空间尺度（以格为单位）
+uniform float uNoiseSpeed;// 模式3：噪声流速（格/秒）
+uniform float uNoiseOct;  // 模式3：FBM阶数(1..4)
+
+/* --- SDF/工具 --- */
+float sdSuperEllipse(vec2 p, vec2 r, float n){
+  p = abs(p) / r;
+  float k = pow(pow(p.x, n) + pow(p.y, n), 1.0/n);
+  return (k - 1.0) * min(r.x, r.y);
+}
+float smin(float a, float b, float k){
+  float hk = max(1e-4, k);
+  float h = clamp(0.5 + 0.5*(b - a)/hk, 0.0, 1.0);
+  return mix(b, a, h) - hk*h*(1.0 - h);
+}
+vec4 fetch4(vec2 ij){ vec2 uv=(ij+0.5)/uFieldSize; return texture2D(uDisp, uv); }
+vec2 sampleDispAtW(vec2 posW){
+  vec2 g = (posW / uWorld) * (uFieldSize - 1.0);
+  vec2 ij=floor(g), f=clamp(g-ij,0.0,1.0);
+  vec4 d00=fetch4(ij), d10=fetch4(ij+vec2(1.,0.)), d01=fetch4(ij+vec2(0.,1.)), d11=fetch4(ij+vec2(1.,1.));
+  return mix(mix(d00.xy,d10.xy,f.x), mix(d01.xy,d11.xy,f.x), f.y);
+}
+float sampleInflAtW(vec2 posW){
+  vec2 g=(posW/uWorld)*(uFieldSize-1.0);
+  vec2 ij=floor(g), f=clamp(g-ij,0.0,1.0);
+  vec4 d00=fetch4(ij), d10=fetch4(ij+vec2(1.,0.)), d01=fetch4(ij+vec2(0.,1.)), d11=fetch4(ij+vec2(1.,1.));
+  return clamp(mix(mix(d00.z,d10.z,f.x), mix(d01.z,d11.z,f.x), f.y), 0.0, uInflMax);
+}
+float sampleLensAtW(vec2 posW){
+  vec2 g=(posW/uWorld)*(uFieldSize-1.0);
+  vec2 ij=floor(g), f=clamp(g-ij,0.0,1.0);
+  vec4 d00=fetch4(ij), d10=fetch4(ij+vec2(1.,0.)), d01=fetch4(ij+vec2(0.,1.)), d11=fetch4(ij+vec2(1.,1.));
+  return clamp(mix(mix(d00.w,d10.w,f.x), mix(d01.w,d11.w,f.x), f.y), 0.0, 1.0);
+}
+mat2 localJacEdgeW(vec2 posW){
+  vec2 step = uWorld / max(uFieldSize - 1.0, vec2(1.0));
+  vec2 dpx = vec2(step.x, 0.0), dpy = vec2(0.0, step.y);
+  vec2 pL=posW-dpx, pR=posW+dpx, pB=posW-dpy, pT=posW+dpy;
+  bool L=(pL.x<0.), R=(pR.x>uWorld.x), B=(pB.y<0.), T=(pT.y>uWorld.y);
+  vec2 ddx, ddy;
+  if(L) ddx=(sampleDispAtW(pR)-sampleDispAtW(posW))/step.x;
+  else if(R) ddx=(sampleDispAtW(posW)-sampleDispAtW(pL))/step.x;
+  else ddx=(sampleDispAtW(pR)-sampleDispAtW(pL))/(2.0*step.x);
+  if(B) ddy=(sampleDispAtW(pT)-sampleDispAtW(posW))/step.y;
+  else if(T) ddy=(sampleDispAtW(posW)-sampleDispAtW(pB))/step.y;
+  else ddy=(sampleDispAtW(pT)-sampleDispAtW(pB))/(2.0*step.y);
+  return mat2(ddx.x, ddy.x, ddx.y, ddy.y);
+}
+
+/* --- 随机/噪声 --- */
+float hash21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+float vnoise(vec2 p){
+  vec2 i=floor(p), f=fract(p);
+  float a=hash21(i);
+  float b=hash21(i+vec2(1.,0.));
+  float c=hash21(i+vec2(0.,1.));
+  float d=hash21(i+vec2(1.,1.));
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+float fbm4(vec2 p){
+  float t=0.0, a=0.5, f=1.0;
+  float w1=1.0;
+  float w2=step(2.0, uNoiseOct);
+  float w3=step(3.0, uNoiseOct);
+  float w4=step(4.0, uNoiseOct);
+  t += a*vnoise(p*f)*w1; a*=0.5; f*=2.0;
+  t += a*vnoise(p*f)*w2; a*=0.5; f*=2.0;
+  t += a*vnoise(p*f)*w3; a*=0.5; f*=2.0;
+  t += a*vnoise(p*f)*w4;
+  float norm = 0.5 + 0.25*w2 + 0.125*w3 + 0.0625*w4;
+  return (norm>0.0) ? (t / norm) : 0.0;
+}
+
+/* --- 网格并集：引入 per-cell 呼吸 --- */
+float sdGridUnion(vec2 frag, vec2 pitch, vec2 anchorW, vec2 rBase){
+  vec2 fragW = frag + uWorldOff;
+  float tCyc = uTime / max(uPeriod, 1.0e-4);
+  vec2 refW = fragW - sampleDispAtW(fragW);
+
+  // 以“格”为单位的索引
+  vec2 idx0 = floor((refW - anchorW)/pitch + 0.5);
+
+  float best = 1.0e9;
+  for(int m=0;m<9;++m){
+    vec2 d=vec2(0.0);
+    if(m==1)d=vec2( 1.,0.); if(m==2)d=vec2(-1.,0.);
+    if(m==3)d=vec2(0., 1.); if(m==4)d=vec2(0.,-1.);
+    if(m==5)d=vec2( 1.,1.); if(m==6)d=vec2( 1.,-1.);
+    if(m==7)d=vec2(-1.,1.); if(m==8)d=vec2(-1.,-1.);
+    if(m>=5 && uFull9<0.5) continue;
+
+    vec2 idx = idx0 + d;
+    vec2 cW  = anchorW + pitch*idx;
+
+    // 位移 + 形变守恒缩放
+    vec2 off = sampleDispAtW(cW);
+    float scaleDiv = 1.0;
+    if(uIsoScale>0.5){
+      mat2 J=localJacEdgeW(cW);
+      float div=J[0][0]+J[1][1];
+      float s0=clamp(1.0 + uShapeAmp*div, 0.5, 2.0);
+      vec2 stepPix=uWorld/max(uFieldSize-1.0, vec2(1.0));
+      float edgePx=max(0.0, min(min(cW.x, uWorld.x-cW.x), min(cW.y, uWorld.y-cW.y)));
+      float msk=smoothstep(0.0, max(stepPix.x,stepPix.y)*2.0, edgePx);
+      scaleDiv=mix(1.0, s0, msk);
+    }
+
+    // —— per-cell 呼吸因子（四种模式）——
+    float basePhase = 6.2831853 * tCyc;
+    float phase = basePhase;
+
+    if(uBreathe>0.5){
+      if(uBMode > 0.5 && uBMode < 1.5){
+        float jitter = (hash21(idx) - 0.5) * 3.1415926 * uPhaseJit;
+        phase += jitter;
+      }
+      if(uBMode >= 1.5 && uBMode < 2.5){
+        phase += uWaveK * dot(idx, normalize(uWaveDir));
+      }
+    }
+
+    float wBreath;
+    if(uBreathe<0.5){
+      wBreath = 1.0;
+    }else if(uBMode >= 2.5){
+      vec2 pNoise = idx * (1.0/max(uNoiseScale,1e-4)) + uNoiseDir * (uNoiseSpeed * uTime);
+      float n = fbm4(pNoise);
+      wBreath = n;
+    }else{
+      wBreath = 0.5 + 0.5*sin(phase);
+    }
+
+    float sCell = (uBreathe>0.5)? mix(uMinS, uMaxS, wBreath) : uMaxS;
+
+    float infl = sampleInflAtW(cW);
+    float scaleEff = sCell + infl;
+
+    vec2 p = (fragW - (cW + off)) / (scaleDiv * scaleEff);
+    float di = sdSuperEllipse(p, rBase, uNPow);
+    best = min(best, di);
+  }
+  return best;
+}
+`;
+
+      /* ---------------- 底层小格片元 ---------------- */
+      const fragBase = `
+${FRAG_GRID_COMMON}
+void main(){
+  vec2 frag = gl_FragCoord.xy;
+  float cellS = uCell * uScale;
+  vec2  gapS  = uGap  * uScale;
+  vec2  pitch = vec2(cellS + gapS.x, cellS + gapS.y);
+  vec2  rBase = vec2(0.5 * cellS);
+  vec2 anchor0 = 0.5*uWorld;
+  vec2 anchor1 = anchor0 + 0.5*pitch;
+  float d0 = sdGridUnion(frag, pitch, anchor0, rBase);
+  float d1 = sdGridUnion(frag, pitch, anchor1, rBase);
+  float base = min(cellS, min(pitch.x, pitch.y));
+  float k = uKFac * base;
+  float d = smin(d0, d1, k);
+  float a = 1.0 - smoothstep(0.0, uAA, d);
+  gl_FragColor = vec4(vec3(1.0), a);
+}
+`;
+
+      /* ---------------- Logo 叠加层（含持久透镜 & 呼吸模式） ---------------- */
+      const fragOverlay = `
+${FRAG_GRID_COMMON}
+precision highp float;
+#define MAX_OVR 64
+uniform float uLogoMinS, uLogoMaxS;
+uniform float uOverK;
+uniform float uOverCount;
+uniform vec4  uOverRectA[MAX_OVR];  // (cx,cy,hx,hy) in world px
+uniform vec2  uOverRectB[MAX_OVR];  // (r,0)
+
+float sdRoundedBox(vec2 p, vec2 b, float r){
+  vec2 q = abs(p) - b + vec2(r);
+  return length(max(q,0.0)) + min(max(q.x,q.y),0.0) - r;
+}
+
+void main(){
+  vec2 frag  = gl_FragCoord.xy;
+  vec2 fragW = frag + uWorldOff;
+
+  // 先算一次 pitch/anchor，供 Logo per-rect 呼吸索引 & 透镜重算复用
+  float cellS = uCell * uScale;
+  vec2  gapS  = uGap  * uScale;
+  vec2  pitch = vec2(cellS + gapS.x, cellS + gapS.y);
+  vec2  anchor0 = 0.5*uWorld;
+
+  float tCyc = uTime / max(uPeriod, 1.0e-4);
+
+  // Logo 并集 SDF（每个矩形使用与小格一致的 0/1/2/3 模式）
+  float d = 1e9;
+  int N = int(uOverCount+0.5);
+  for(int i=0;i<MAX_OVR;++i){
+    if(i>=N) break;
+    vec4 a=uOverRectA[i];
+    vec2 cW=a.xy; vec2 halfWH=a.zw;
+    float rad=uOverRectB[i].x;
+
+    // 为这个 Logo 矩形生成“格索引”以参与呼吸相位/噪声
+    vec2 idxLogo = floor((cW - anchor0)/pitch + 0.5);
+
+    // 位移跟随 + 形变守恒缩放
+    vec2 off = sampleDispAtW(cW);
+    float scaleDiv = 1.0;
+    if(uIsoScale>0.5){
+      mat2 J=localJacEdgeW(cW);
+      float div=J[0][0]+J[1][1];
+      float s0=clamp(1.0 + uShapeAmp*div, 0.5, 2.0);
+      vec2 stepPix=uWorld/max(uFieldSize-1.0, vec2(1.0));
+      float edgePx=max(0.0, min(min(cW.x, uWorld.x-cW.x), min(cW.y, uWorld.y-cW.y)));
+      float msk=smoothstep(0.0, max(stepPix.x,stepPix.y)*2.0, edgePx);
+      scaleDiv=mix(1.0, s0, msk);
+    }
+
+    // —— 与小格相同的呼吸逻辑 —— 
+    float basePhase = 6.2831853 * tCyc;
+    float phase = basePhase;
+    if(uBreathe>0.5){
+      if(uBMode > 0.5 && uBMode < 1.5){
+        float jitter = (hash21(idxLogo) - 0.5) * 3.1415926 * uPhaseJit;
+        phase += jitter;
+      }
+      if(uBMode >= 1.5 && uBMode < 2.5){
+        phase += uWaveK * dot(idxLogo, normalize(uWaveDir));
+      }
+    }
+
+    float wBreath;
+    if(uBreathe<0.5){
+      wBreath = 1.0;
+    }else if(uBMode >= 2.5){
+      vec2 pNoise = idxLogo * (1.0/max(uNoiseScale,1e-4)) + uNoiseDir * (uNoiseSpeed * uTime);
+      float n = fbm4(pNoise);
+      wBreath = n;
+    }else{
+      wBreath = 0.5 + 0.5*sin(phase);
+    }
+    float sLogo = (uBreathe>0.5)? mix(uLogoMinS, uLogoMaxS, wBreath) : uLogoMaxS;
+
+    // 计算 Logo SDF 并做粘连并集
+    vec2 p   = fragW - (cW + off);
+    float di = sdRoundedBox(p, halfWH*sLogo*scaleDiv, rad*sLogo*scaleDiv);
+    d = smin(d, di, uOverK);
+  }
+
+  // Logo 覆盖 alpha
+  float aLogo = 1.0 - smoothstep(0.0, uAA, d);
+  if(aLogo<=0.0){ discard; }
+
+  // 采样“持久透镜”遮罩（A 通道）
+  float m = sampleLensAtW(fragW);   // 0..1
+
+  // 如果有透镜：重算一次底层小格，并反色（黑格白缝）
+  vec3 colorLogo = vec3(1.0);       // 正常 Logo 颜色：白
+  if(m>0.0){
+    vec2  rBase = vec2(0.5 * cellS);
+    vec2 anchor1 = anchor0 + 0.5*pitch;
+    float d0 = sdGridUnion(frag, pitch, anchor0, rBase);
+    float d1 = sdGridUnion(frag, pitch, anchor1, rBase);
+    float base = min(cellS, min(pitch.x, pitch.y));
+    float k = uKFac * base;
+    float dg = smin(d0, d1, k);
+    float aGrid = 1.0 - smoothstep(0.0, uAA, dg);
+    vec3 lensColor = mix(vec3(1.0), vec3(0.0), aGrid); // 反色
+    colorLogo = mix(colorLogo, lensColor, m);
+  }
+
+  gl_FragColor = vec4(colorLogo, aLogo);
+}
+`;
+
+      /* -------------- WebGL 组装 -------------- */
+      const canvas = document.getElementById("c");
+      const gl = canvas.getContext("webgl", {
+        antialias: false,
+        depth: false,
+        stencil: false,
+        premultipliedAlpha: false,
+      });
+      if (!gl) {
+        alert("WebGL 不可用");
+        throw new Error("no webgl");
+      }
+      if (!gl.getExtension("OES_texture_float")) {
+        alert("需要 OES_texture_float 扩展");
+      }
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.clearColor(0, 0, 0, 1);
+
+      const vertSrc = `attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);} `;
+      function sh(t, src) {
+        const s = gl.createShader(t);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+          console.error(gl.getShaderInfoLog(s));
+          throw new Error(gl.getShaderInfoLog(s) || "shader");
+        }
+        return s;
+      }
+      function prog(vs, fs) {
+        const p = gl.createProgram();
+        gl.attachShader(p, vs);
+        gl.attachShader(p, fs);
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          console.error(gl.getProgramInfoLog(p));
+          throw new Error(gl.getProgramInfoLog(p) || "link");
+        }
+        return p;
+      }
+
+      const vs = sh(gl.VERTEX_SHADER, vertSrc);
+      const fsBase = sh(gl.FRAGMENT_SHADER, fragBase);
+      const fsOverlay = sh(gl.FRAGMENT_SHADER, fragOverlay);
+      const prBase = prog(vs, fsBase);
+      const prOvr = prog(vs, fsOverlay);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 3, -1, -1, 3]),
+        gl.STATIC_DRAW
+      );
+      function bindAttrib(p) {
+        gl.useProgram(p);
+        const loc = gl.getAttribLocation(p, "aPos");
+        gl.enableVertexAttribArray(loc);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      }
+      bindAttrib(prBase);
+      bindAttrib(prOvr);
+
+      /* ---- 底层 uniform ---- */
+      const uRes = gl.getUniformLocation(prBase, "uRes"),
+        uWorld = gl.getUniformLocation(prBase, "uWorld"),
+        uWorldOff = gl.getUniformLocation(prBase, "uWorldOff"),
+        uTime = gl.getUniformLocation(prBase, "uTime"),
+        uCell = gl.getUniformLocation(prBase, "uCell"),
+        uGap = gl.getUniformLocation(prBase, "uGap"),
+        uScale = gl.getUniformLocation(prBase, "uScale"),
+        uMinS = gl.getUniformLocation(prBase, "uMinS"),
+        uMaxS = gl.getUniformLocation(prBase, "uMaxS"),
+        uPeriod = gl.getUniformLocation(prBase, "uPeriod"),
+        uBreathe = gl.getUniformLocation(prBase, "uBreathe"),
+        uAA = gl.getUniformLocation(prBase, "uAA"),
+        uNPow = gl.getUniformLocation(prBase, "uNPow"),
+        uKFac = gl.getUniformLocation(prBase, "uKFac"),
+        uDisp = gl.getUniformLocation(prBase, "uDisp"),
+        uFieldSize = gl.getUniformLocation(prBase, "uFieldSize"),
+        uShapeAmp = gl.getUniformLocation(prBase, "uShapeAmp"),
+        uFull9 = gl.getUniformLocation(prBase, "uFull9"),
+        uIsoScale = gl.getUniformLocation(prBase, "uIsoScale"),
+        uInflMax = gl.getUniformLocation(prBase, "uInflMax"),
+        // 新增（模式2/3）
+        uBMode = gl.getUniformLocation(prBase, "uBMode"),
+        uWaveDir = gl.getUniformLocation(prBase, "uWaveDir"),
+        uWaveK = gl.getUniformLocation(prBase, "uWaveK"),
+        uPhaseJit = gl.getUniformLocation(prBase, "uPhaseJit"),
+        uNoiseDir = gl.getUniformLocation(prBase, "uNoiseDir"),
+        uNoiseScale = gl.getUniformLocation(prBase, "uNoiseScale"),
+        uNoiseSpeed = gl.getUniformLocation(prBase, "uNoiseSpeed"),
+        uNoiseOct = gl.getUniformLocation(prBase, "uNoiseOct");
+
+      /* ---- 叠加层 uniform（需要小格参数以重算反色） ---- */
+      const O = {
+        uRes: gl.getUniformLocation(prOvr, "uRes"),
+        uWorld: gl.getUniformLocation(prOvr, "uWorld"),
+        uWorldOff: gl.getUniformLocation(prOvr, "uWorldOff"),
+        uTime: gl.getUniformLocation(prOvr, "uTime"),
+        uCell: gl.getUniformLocation(prOvr, "uCell"),
+        uGap: gl.getUniformLocation(prOvr, "uGap"),
+        uScale: gl.getUniformLocation(prOvr, "uScale"),
+        uMinS: gl.getUniformLocation(prOvr, "uMinS"),
+        uMaxS: gl.getUniformLocation(prOvr, "uMaxS"),
+        uPeriod: gl.getUniformLocation(prOvr, "uPeriod"),
+        uBreathe: gl.getUniformLocation(prOvr, "uBreathe"),
+        uAA: gl.getUniformLocation(prOvr, "uAA"),
+        uNPow: gl.getUniformLocation(prOvr, "uNPow"),
+        uKFac: gl.getUniformLocation(prOvr, "uKFac"),
+        uDisp: gl.getUniformLocation(prOvr, "uDisp"),
+        uFieldSize: gl.getUniformLocation(prOvr, "uFieldSize"),
+        uShapeAmp: gl.getUniformLocation(prOvr, "uShapeAmp"),
+        uFull9: gl.getUniformLocation(prOvr, "uFull9"),
+        uIsoScale: gl.getUniformLocation(prOvr, "uIsoScale"),
+        uInflMax: gl.getUniformLocation(prOvr, "uInflMax"),
+        uLogoMinS: gl.getUniformLocation(prOvr, "uLogoMinS"),
+        uLogoMaxS: gl.getUniformLocation(prOvr, "uLogoMaxS"),
+        uOverK: gl.getUniformLocation(prOvr, "uOverK"),
+        uOverCount: gl.getUniformLocation(prOvr, "uOverCount"),
+        uOverRectA: gl.getUniformLocation(prOvr, "uOverRectA[0]"),
+        uOverRectB: gl.getUniformLocation(prOvr, "uOverRectB[0]"),
+        // 新增（模式2/3）
+        uBMode: gl.getUniformLocation(prOvr, "uBMode"),
+        uWaveDir: gl.getUniformLocation(prOvr, "uWaveDir"),
+        uWaveK: gl.getUniformLocation(prOvr, "uWaveK"),
+        uPhaseJit: gl.getUniformLocation(prOvr, "uPhaseJit"),
+        uNoiseDir: gl.getUniformLocation(prOvr, "uNoiseDir"),
+        uNoiseScale: gl.getUniformLocation(prOvr, "uNoiseScale"),
+        uNoiseSpeed: gl.getUniformLocation(prOvr, "uNoiseSpeed"),
+        uNoiseOct: gl.getUniformLocation(prOvr, "uNoiseOct"),
+      };
+
+      /* ---------- UI & 存储 ---------- */
+      const $ = (id) => document.getElementById(id);
+      const cell = $("cell"),
+        cellv = $("cellv");
+      const gapX = $("gapX"),
+        gapY = $("gapY");
+      const scale = $("scale"),
+        scalev = $("scalev");
+      const minS = $("minS"),
+        minSv = $("minSv");
+      const maxS = $("maxS"),
+        maxSv = $("maxSv");
+      const period = $("period"),
+        periodv = $("periodv");
+      const breath = $("breath");
+      const nPow = $("nPow"),
+        nPowv = $("nPowv");
+      const kFac = $("kFac"),
+        kFacv = $("kFacv");
+      const shapeAmp = $("shapeAmp"),
+        shapeAmpv = $("shapeAmpv");
+      const springK = $("springK"),
+        springKv = $("springKv");
+      const damp = $("damp"),
+        dampv = $("dampv");
+      const tension = $("tension"),
+        tensionv = $("tensionv");
+      const brushR = $("brushR"),
+        brushRv = $("brushRv");
+      const brushF = $("brushF"),
+        brushFv = $("brushFv");
+      const fieldStep = $("fieldStep"),
+        fieldStepv = $("fieldStepv");
+      const isoScale = $("isoScale"),
+        full9 = $("full9");
+      const marginP = $("marginP"),
+        marginPv = $("marginPv");
+      const useSpeed = $("useSpeed"),
+        vTau = $("vTau"),
+        vTauv = $("vTauv"),
+        vMax = $("vMax");
+      const speedv = document.getElementById("speedv");
+      const kCoef = $("kCoef"),
+        dCoef = $("dCoef"),
+        tCoef = $("tCoef"),
+        rCoef = $("rCoef"),
+        fCoef = $("fCoef");
+      const inflMax = $("inflMax"),
+        inflMaxv = $("inflMaxv");
+      const inflResp = $("inflResp"),
+        inflRespv = $("inflRespv");
+      const inflDecay = $("inflDecay"),
+        inflDecayv = $("inflDecayv");
+      const inflVRef = $("inflVRef"),
+        inflVDead = $("inflVDead");
+      const capBase = $("capBase"),
+        capBasev = $("capBasev");
+      const capK = $("capK"),
+        capKv = $("capKv");
+      const reentryMs = $("reentryMs");
+      const logoMinS = $("logoMinS"),
+        logoMinSv = $("logoMinSv");
+      const logoMaxS = $("logoMaxS"),
+        logoMaxSv = $("logoMaxSv");
+      const lensFeather = $("lensFeather"),
+        lensFeatherv = $("lensFeatherv");
+
+      // 新增 UI
+      const bMode = $("bMode");
+      const phaseJit = $("phaseJit"),
+        phaseJitv = $("phaseJitv");
+      const waveDeg = $("waveDeg"),
+        waveDegv = $("waveDegv");
+      const waveLenU = $("waveLenU"),
+        waveLenUv = $("waveLenUv");
+      const noiseScaleU = $("noiseScaleU"),
+        noiseScaleUv = $("noiseScaleUv");
+      const noiseSpeedU = $("noiseSpeedU"),
+        noiseSpeedUv = $("noiseSpeedUv");
+      const noiseDeg = $("noiseDeg"),
+        noiseDegv = $("noiseDegv");
+      const noiseOct = $("noiseOct"),
+        noiseOctv = $("noiseOctv");
+
+      let speedSmoothed = 0;
+      const KEY = "grid_world_inflate_decoupled_v1";
+
+      // —— 你的 defaults（原值保留），新增参数只在最后追加 ——
+      const defaults = {
+        cell: 40,
+        gapX: 6,
+        gapY: 6,
+        scale: 1.0,
+        minS: 0.06,
+        maxS: 0.45,
+        period: 4.0,
+        breath: false,
+        nPow: 4.0,
+        kFac: 0.7,
+        shapeAmp: 0.6,
+        springK: 60,
+        damp: 6.6,
+        tension: 56.0,
+        brushR: 10,
+        brushF: 3000,
+        fieldStep: 6,
+        isoScale: false,
+        full9: false,
+        marginP: 4.0,
+        useSpeed: true,
+        vTau: 0.6,
+        vMax: 6000,
+        kCoef: 0.8,
+        dCoef: 0.0008,
+        tCoef: 0.003,
+        rCoef: 0.09,
+        fCoef: 0.8,
+        inflMax: 0.6,
+        inflResp: 1.0,
+        inflDecay: 1.2,
+        inflVRef: 480,
+        inflVDead: 40,
+        capBase: 0.6,
+        capK: 3.0,
+        reentryMs: 120,
+        logoMinS: 0.75,
+        logoMaxS: 1.1,
+        lensFeather: 0.0,
+
+        // —— 新增（模式/动画可调）——
+        bMode: 2, // 默认展示“扫波”
+        phaseJit: 0.6, // 分相抖动
+        waveDeg: 30, // 扫波角度°
+        waveLenU: 12, // 扫波波长(格)
+        noiseScaleU: 9, // 噪声尺度(格)
+        noiseSpeedU: 0.4, // 噪声速度(格/s)
+        noiseDeg: 25, // 噪声流动方向°
+        noiseOct: 3, // 噪声阶数(1..4)
+      };
+
+      function loadCfg() {
+        try {
+          return Object.assign(
+            {},
+            defaults,
+            JSON.parse(localStorage.getItem(KEY) || "{}")
+          );
+        } catch {
+          return { ...defaults };
+        }
+      }
+      function saveCfg() {
+        const cfg = {
+          cell: +cell.value,
+          gapX: +gapX.value,
+          gapY: +gapY.value,
+          scale: +scale.value,
+          minS: +minS.value,
+          maxS: +maxS.value,
+          period: +period.value,
+          breath: !!breath.checked,
+          nPow: +nPow.value,
+          kFac: +kFac.value,
+          shapeAmp: +shapeAmp.value,
+          springK: +springK.value,
+          damp: +damp.value,
+          tension: +tension.value,
+          brushR: +brushR.value,
+          brushF: +brushF.value,
+          fieldStep: +fieldStep.value,
+          isoScale: !!isoScale.checked,
+          full9: !!full9.checked,
+          marginP: +marginP.value,
+          useSpeed: !!useSpeed.checked,
+          vTau: +vTau.value,
+          vMax: +vMax.value,
+          kCoef: +kCoef.value,
+          dCoef: +dCoef.value,
+          tCoef: +tCoef.value,
+          rCoef: +rCoef.value,
+          fCoef: +fCoef.value,
+          inflMax: +inflMax.value,
+          inflResp: +inflResp.value,
+          inflDecay: +inflDecay.value,
+          inflVRef: +inflVRef.value,
+          inflVDead: +inflVDead.value,
+          capBase: +capBase.value,
+          capK: +capK.value,
+          reentryMs: +reentryMs.value,
+          logoMinS: +logoMinS.value,
+          logoMaxS: +logoMaxS.value,
+          lensFeather: +lensFeather.value,
+
+          // 新增保存
+          bMode: +bMode.value,
+          phaseJit: +phaseJit.value,
+          waveDeg: +waveDeg.value,
+          waveLenU: +waveLenU.value,
+          noiseScaleU: +noiseScaleU.value,
+          noiseSpeedU: +noiseSpeedU.value,
+          noiseDeg: +noiseDeg.value,
+          noiseOct: +noiseOct.value,
+        };
+        localStorage.setItem(KEY, JSON.stringify(cfg));
+      }
+      function syncLabels() {
+        cellv.textContent = (+cell.value).toFixed(0);
+        scalev.textContent = (+scale.value).toFixed(2);
+        minSv.textContent = (+minS.value).toFixed(2);
+        maxSv.textContent = (+maxS.value).toFixed(2);
+        periodv.textContent = (+period.value).toFixed(1);
+        nPowv.textContent = (+nPow.value).toFixed(1);
+        kFacv.textContent = (+kFac.value).toFixed(2);
+        shapeAmpv.textContent = (+shapeAmp.value).toFixed(2);
+        springKv.textContent = (+springK.value).toFixed(0);
+        dampv.textContent = (+damp.value).toFixed(2);
+        tensionv.textContent = (+tension.value).toFixed(2);
+        brushRv.textContent = (+brushR.value).toFixed(0);
+        brushFv.textContent = (+brushF.value).toFixed(0);
+        fieldStepv.textContent = (+fieldStep.value).toFixed(0);
+        marginPv.textContent = (+marginP.value).toFixed(2);
+        vTauv.textContent = (+vTau.value).toFixed(2);
+        if (speedv) speedv.textContent = speedSmoothed.toFixed(0);
+        inflMaxv.textContent = (+inflMax.value).toFixed(2);
+        inflRespv.textContent = (+inflResp.value).toFixed(2);
+        inflDecayv.textContent = (+inflDecay.value).toFixed(2);
+        capBasev.textContent = (+capBase.value).toFixed(2);
+        capKv.textContent = (+capK.value).toFixed(2);
+        logoMinSv.textContent = (+logoMinS.value).toFixed(2);
+        logoMaxSv.textContent = (+logoMaxS.value).toFixed(2);
+        lensFeatherv.textContent = (+lensFeather.value).toFixed(2);
+
+        // 新增标签
+        phaseJitv.textContent = (+phaseJit.value).toFixed(2);
+        waveDegv.textContent = (+waveDeg.value).toFixed(0);
+        waveLenUv.textContent = (+waveLenU.value).toFixed(0);
+        noiseScaleUv.textContent = (+noiseScaleU.value).toFixed(0);
+        noiseSpeedUv.textContent = (+noiseSpeedU.value).toFixed(2);
+        noiseDegv.textContent = (+noiseDeg.value).toFixed(0);
+        noiseOctv.textContent = (+noiseOct.value).toFixed(0);
+      }
+      function currentPitchPx() {
+        const cellS = +cell.value * +scale.value;
+        const gapSX = Math.max(0, +gapX.value) * +scale.value;
+        const gapSY = Math.max(0, +gapY.value) * +scale.value;
+        return {
+          x: cellS + gapSX,
+          y: cellS + gapSY,
+          min: Math.min(cellS + gapSX, cellS + gapSY),
+          cellS,
+        };
+      }
+
+      /* ---------- 5 & M 字形（保留） ---------- */
+      const glyph5 = [
+        [1.5, 5.0, 6.0, 2.0, 0.45],
+        [-0.5, 2.0, 2.0, 2.0, 0.45],
+        [1.5, 0.75, 2.0, 2.0, 0.45],
+        [3.5, -1.625, 2.0, 4.0, 0.45],
+        [0.5, -4.0, 4.0, 2.0, 0.45],
+      ];
+      const glyphM = [
+        [0.0, 7.0, 2.0, 2.5, 0.45],
+        [8.0, 7.0, 2.0, 2.5, 0.45],
+        [2.0, 5.0, 2.0, 2.5, 0.45],
+        [6.0, 5.0, 2.0, 2.5, 0.45],
+        [0.0, 0.0, 2.0, 5.5, 0.45],
+        [4.0, 2.0, 2.0, 4.5, 0.45],
+        [8.0, 0.0, 2.0, 5.5, 0.45],
+      ];
+      const overlayCfg = { charGapU: 2.5, kUnit: 0.35 };
+      const overlay = {
+        count: 0,
+        flatA: new Float32Array(0),
+        flatB: new Float32Array(0),
+        kPx: 12,
+      };
+      function buildGlyph(g) {
+        let minx = 1e9,
+          miny = 1e9,
+          maxx = -1e9,
+          maxy = -1e9;
+        for (const [dx, dy, w, h] of g) {
+          minx = Math.min(minx, dx - w / 2);
+          maxx = Math.max(maxx, dx + w / 2);
+          miny = Math.min(miny, dy - h / 2);
+          maxy = Math.max(maxy, dy + h / 2);
+        }
+        return {
+          glyph: g,
+          minx,
+          miny,
+          maxx,
+          maxy,
+          w: maxx - minx,
+          h: maxy - miny,
+        };
+      }
+      const G5 = buildGlyph(glyph5),
+        GM = buildGlyph(glyphM);
+      function rebuildOverlay() {
+        const pitch = currentPitchPx();
+        const unitPx = pitch.cellS;
+        const gapU = overlayCfg.charGapU;
+        const cx = field.worldW * 0.5,
+          cy = field.worldH * 0.5;
+        const totalU = G5.w + gapU + GM.w;
+        const leftU = -totalU / 2;
+
+        const rectsA = [],
+          rectsB = [];
+        function pushGlyph(G, originU) {
+          for (const [dx, dy, w, h, r] of G.glyph) {
+            const cxU = originU + (dx - G.minx);
+            const cyU = dy - (G.miny + G.h / 2);
+            const cxW = cx + cxU * unitPx;
+            const cyW = cy + cyU * unitPx;
+            rectsA.push(cxW, cyW, 0.5 * w * unitPx, 0.5 * h * unitPx);
+            rectsB.push(r * unitPx, 0);
+          }
+        }
+        pushGlyph(G5, leftU);
+        pushGlyph(GM, leftU + G5.w + gapU);
+        overlay.count = rectsB.length / 2;
+        overlay.flatA = new Float32Array(rectsA);
+        overlay.flatB = new Float32Array(rectsB);
+        overlay.kPx = overlayCfg.kUnit * unitPx;
+      }
+
+      /* ---------- 位移/放大量/透镜 场 ---------- */
+      let field = null;
+      function createTexture(w, h) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.RGBA,
+          w,
+          h,
+          0,
+          gl.RGBA,
+          gl.FLOAT,
+          null
+        );
+        return tex;
+      }
+      function initField() {
+        const step = +fieldStep.value;
+        const pitch = currentPitchPx();
+        const padPx = Math.max(0, +marginP.value * pitch.min);
+        const worldW = canvas.width + 2 * padPx,
+          worldH = canvas.height + 2 * padPx;
+        const Nx = Math.max(2, Math.floor(worldW / step) + 1);
+        const Ny = Math.max(2, Math.floor(worldH / step) + 1);
+        const hx = worldW / (Nx - 1),
+          hy = worldH / (Ny - 1);
+        field = {
+          Nx,
+          Ny,
+          hx,
+          hy,
+          worldW,
+          worldH,
+          padPx,
+          u: new Float32Array(Nx * Ny * 2),
+          v: new Float32Array(Nx * Ny * 2),
+          s: new Float32Array(Nx * Ny),
+          stgt: new Float32Array(Nx * Ny),
+          l: new Float32Array(Nx * Ny),
+          ltgt: new Float32Array(Nx * Ny),
+          tex: createTexture(Nx, Ny),
+          pack: new Float32Array(Nx * Ny * 4),
+        };
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, field.tex);
+        gl.useProgram(prBase);
+        gl.uniform1i(uDisp, 0);
+        gl.uniform2f(uFieldSize, Nx, Ny);
+        gl.uniform2f(uWorld, worldW, worldH);
+        gl.uniform2f(uWorldOff, padPx, padPx);
+      }
+      function idx(i, j) {
+        return 2 * (i + j * field.Nx);
+      }
+      function idxS(i, j) {
+        return i + j * field.Nx;
+      }
+
+      function stepField(dt, eff) {
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          u = field.u,
+          v = field.v;
+        const k = eff.k,
+          d = eff.d,
+          T = eff.t,
+          Ucap = eff.Ucap;
+        for (let j = 1; j < Ny - 1; j++) {
+          for (let i = 1; i < Nx - 1; i++) {
+            const c = idx(i, j),
+              l = idx(i - 1, j),
+              r = idx(i + 1, j),
+              t = idx(i, j - 1),
+              b = idx(i, j + 1);
+            const lapx = u[l] + u[r] + u[t] + u[b] - 4 * u[c];
+            const lapy =
+              u[l + 1] + u[r + 1] + u[t + 1] + u[b + 1] - 4 * u[c + 1];
+            const ax = k * lapx - T * u[c] - d * v[c];
+            const ay = k * lapy - T * u[c + 1] - d * v[c + 1];
+            v[c] += ax * dt;
+            v[c + 1] += ay * dt;
+          }
+        }
+        // 边界固定
+        for (let i = 0; i < Nx; i++) {
+          let c0 = idx(i, 0),
+            c1 = idx(i, Ny - 1);
+          v[c0] = v[c0 + 1] = u[c0] = u[c0 + 1] = 0;
+          v[c1] = v[c1 + 1] = u[c1] = u[c1 + 1] = 0;
+        }
+        for (let j = 0; j < Ny; j++) {
+          let c0 = idx(0, j),
+            c1 = idx(Nx - 1, j);
+          v[c0] = v[c0 + 1] = u[c0] = u[c0 + 1] = 0;
+          v[c1] = v[c1 + 1] = u[c1] = u[c1 + 1] = 0;
+        }
+        // 更新位移
+        for (let n = 0; n < u.length; n++) u[n] += v[n] * dt;
+
+        // 位移上限
+        if (Ucap > 0) {
+          for (let j = 0; j < Ny; j++)
+            for (let i = 0; i < Nx; i++) {
+              const c = idx(i, j),
+                ux = u[c],
+                uy = u[c + 1],
+                len = Math.hypot(ux, uy);
+              if (len > Ucap) {
+                const s = Ucap / len;
+                u[c] = ux * s;
+                u[c + 1] = uy * s;
+                v[c] *= s;
+                v[c + 1] *= s;
+              }
+            }
+        }
+      }
+
+      // 放大 & 透镜：线性恢复
+      function stepInflateAndLens(dt) {
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          s = field.s,
+          st = field.stgt,
+          L = field.l,
+          Lt = field.ltgt;
+        const sMax = +inflMax.value,
+          decay = +inflDecay.value;
+        for (let j = 0; j < Ny; j++)
+          for (let i = 0; i < Nx; i++) {
+            const c = idxS(i, j);
+            const tgtS = Math.min(sMax, st[c]);
+            s[c] = tgtS > s[c] ? tgtS : Math.max(0, s[c] - decay * dt);
+            st[c] = 0;
+            const tgtL = Math.min(1.0, Lt[c]);
+            L[c] = tgtL > L[c] ? tgtL : Math.max(0, L[c] - decay * dt);
+            Lt[c] = 0;
+          }
+      }
+
+      /* ---------- 输入/速度（反比阻尼） ---------- */
+      const mouse = {
+        x: 0,
+        y: 0,
+        px: 0,
+        py: 0,
+        vx: 0,
+        vy: 0,
+        in: true,
+        initialized: false,
+        lastTS: 0,
+      };
+      addEventListener("pointermove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const sx = canvas.width / rect.width,
+          sy = canvas.height / rect.height;
+        const nx = (e.clientX - rect.left) * sx;
+        const ny = (rect.bottom - e.clientY) * sy;
+        const now = performance.now();
+        const stale = now - (mouse.lastTS || now) > (+reentryMs.value || 0);
+        if (stale) {
+          mouse.px = nx;
+          mouse.py = ny;
+          mouse.vx = 0;
+          mouse.vy = 0;
+          speedSmoothed = 0;
+        }
+        mouse.x = nx;
+        mouse.y = ny;
+        mouse.lastTS = now;
+      });
+      addEventListener("pointerenter", () => (mouse.in = true));
+      addEventListener("pointerleave", () => (mouse.in = false));
+
+      function computeEffective(dt) {
+        if (!mouse.initialized) {
+          mouse.px = mouse.x;
+          mouse.py = mouse.y;
+          mouse.initialized = true;
+        }
+        const prevX = mouse.px,
+          prevY = mouse.py;
+        const vx = (mouse.x - mouse.px) / Math.max(dt, 1e-4),
+          vy = (mouse.y - mouse.py) / Math.max(dt, 1e-4);
+        mouse.vx = vx;
+        mouse.vy = vy;
+        mouse.px = mouse.x;
+        mouse.py = mouse.y;
+
+        const vInst = Math.hypot(vx, vy);
+        const vmax = Math.max(10, +vMax.value);
+        const vClamped = Math.min(vInst, vmax);
+        const tau = Math.max(0, +vTau.value);
+        const alpha = tau > 0 ? Math.min(1, dt / (tau + 1e-6)) : 1;
+        speedSmoothed = (1 - alpha) * speedSmoothed + alpha * vClamped;
+
+        const use = !!useSpeed.checked;
+        const k0 = +springK.value,
+          d0 = +damp.value,
+          t0 = +tension.value;
+        const R0 = +brushR.value,
+          F0 = +brushF.value;
+        let k = k0,
+          d = d0,
+          t = t0,
+          R = R0,
+          F = F0;
+        if (use) {
+          k = k0 + +kCoef.value * speedSmoothed;
+          d = d0 / (1 + Math.max(0, +dCoef.value) * speedSmoothed); // 反比
+          t = t0 + +tCoef.value * speedSmoothed;
+          R = R0 + +rCoef.value * speedSmoothed;
+          F = F0 + +fCoef.value * speedSmoothed;
+        }
+        k = Math.min(60, Math.max(2, k));
+        d = Math.min(6.6, Math.max(0.02, d));
+        t = Math.min(56, Math.max(0, t));
+        R = Math.min(240, Math.max(10, R));
+        F = Math.min(3000, Math.max(50, F));
+
+        const pitch = currentPitchPx();
+        const vRef = Math.max(1, +inflVRef.value);
+        const mul =
+          +capBase.value + +capK.value * Math.min(1, speedSmoothed / vRef);
+        const Ucap = Math.max(0, mul) * pitch.min;
+        return { k, d, t, R, F, vInst, Ucap, prevX, prevY };
+      }
+
+      /* ---- 盖章：位移 + 放大量 + 透镜持久遮罩 ---- */
+      function applyBrush(dt, eff) {
+        if (!mouse.in) return;
+        const R = eff.R,
+          F = eff.F,
+          vInst = eff.vInst;
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          hx = field.hx,
+          hy = field.hy;
+
+        const xw0 = eff.prevX + field.padPx,
+          yw0 = eff.prevY + field.padPx;
+        const xw1 = mouse.x + field.padPx,
+          yw1 = mouse.y + field.padPx;
+
+        const dx = xw1 - xw0,
+          dy = yw1 - yw0,
+          L = Math.hypot(dx, dy);
+        const PATH_STEP_FACTOR = 0.5,
+          GRID_SAFE_FACTOR = 0.9,
+          MAX_STAMPS = 48;
+        const stepLen = Math.max(
+          1,
+          Math.min(PATH_STEP_FACTOR * R, GRID_SAFE_FACTOR * Math.min(hx, hy))
+        );
+        let Ns = L > 1e-3 ? Math.ceil(L / stepLen) : 1;
+        Ns = Math.max(1, Math.min(MAX_STAMPS, Ns));
+
+        const sMax = +inflMax.value,
+          resp = +inflResp.value;
+        const vRef = Math.max(1, +inflVRef.value),
+          vDead = Math.max(0, +inflVDead.value);
+        const vEff = Math.max(0, vInst - vDead);
+        const speedFactor = Math.min(1, vEff / vRef);
+        const forceScale = 1 / Ns;
+
+        for (let k = 0; k < Ns; k++) {
+          const tt = Ns === 1 ? 1 : k / (Ns - 1);
+          const xc = xw0 + dx * tt,
+            yc = yw0 + dy * tt;
+          const ix = Math.round(xc / hx),
+            iy = Math.round(yc / hy);
+          const ir = Math.ceil(R / Math.min(hx, hy)) + 1;
+
+          for (
+            let j = Math.max(1, iy - ir);
+            j < Math.min(Ny - 1, iy + ir);
+            j++
+          ) {
+            for (
+              let i = Math.max(1, ix - ir);
+              i < Math.min(Nx - 1, ix + ir);
+              i++
+            ) {
+              const x = i * hx,
+                y = j * hy;
+              const ddx = x - xc,
+                ddy = y - yc,
+                r2 = ddx * ddx + ddy * ddy;
+              if (r2 > R * R) continue;
+              const w = Math.pow(1.0 - r2 / (R * R), 2.0);
+
+              const c = idx(i, j);
+              field.v[c] += (F * mouse.vx * w * dt * forceScale) / 1000.0;
+              field.v[c + 1] += (F * mouse.vy * w * dt * forceScale) / 1000.0;
+
+              const cs = idxS(i, j);
+              const tgt = sMax * resp * w * speedFactor;
+              if (tgt > field.stgt[cs]) field.stgt[cs] = tgt;
+
+              // 持久透镜（A通道）
+              const lensT = Math.pow(w, 0.01);
+              if (lensT > field.ltgt[cs]) field.ltgt[cs] = lensT;
+            }
+          }
+        }
+      }
+
+      function uploadField() {
+        const Nx = field.Nx,
+          Ny = field.Ny,
+          pack = field.pack,
+          u = field.u,
+          s = field.s,
+          L = field.l;
+        let k = 0;
+        for (let j = 0; j < Ny; j++)
+          for (let i = 0; i < Nx; i++) {
+            const p = idx(i, j),
+              q = idxS(i, j);
+            pack[k++] = u[p]; // R: ux
+            pack[k++] = u[p + 1]; // G: uy
+            pack[k++] = s[q]; // B: inflate
+            pack[k++] = L[q]; // A: lens
+          }
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, field.tex);
+        gl.texSubImage2D(
+          gl.TEXTURE_2D,
+          0,
+          0,
+          0,
+          Nx,
+          Ny,
+          gl.RGBA,
+          gl.FLOAT,
+          pack
+        );
+      }
+
+      /* ---------- 尺寸/Uniform ---------- */
+      function setCanvasSize() {
+        const dpr = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(innerWidth * dpr);
+        canvas.height = Math.floor(innerHeight * dpr);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+      function setUniformsBase() {
+        gl.useProgram(prBase);
+        gl.uniform2f(uRes, canvas.width, canvas.height);
+        if (field) {
+          gl.uniform2f(uWorld, field.worldW, field.worldH);
+          gl.uniform2f(uWorldOff, field.padPx, field.padPx);
+          gl.uniform2f(uFieldSize, field.Nx, field.Ny);
+        }
+        gl.uniform1f(uCell, +cell.value);
+        gl.uniform2f(uGap, Math.max(0, +gapX.value), Math.max(0, +gapY.value));
+        gl.uniform1f(uScale, +scale.value);
+        gl.uniform1f(uMinS, +minS.value);
+        gl.uniform1f(uMaxS, +maxS.value);
+        gl.uniform1f(uPeriod, +period.value);
+        gl.uniform1f(uBreathe, breath.checked ? 1.0 : 0.0);
+        gl.uniform1f(uAA, 1.25);
+        gl.uniform1f(uNPow, +nPow.value);
+        gl.uniform1f(uKFac, +kFac.value);
+        gl.uniform1f(uShapeAmp, +shapeAmp.value);
+        gl.uniform1f(uFull9, full9.checked ? 1.0 : 0.0);
+        gl.uniform1f(uIsoScale, isoScale.checked ? 1.0 : 0.0);
+        gl.uniform1f(uInflMax, +inflMax.value);
+        gl.uniform1i(uDisp, 0);
+
+        // 模式2/3参数
+        const deg = ((+waveDeg.value || 0) * Math.PI) / 180;
+        gl.uniform1f(uBMode, +bMode.value);
+        gl.uniform2f(uWaveDir, Math.cos(deg), Math.sin(deg));
+        const waveLen = Math.max(1, +waveLenU.value);
+        gl.uniform1f(uWaveK, (Math.PI * 2) / waveLen);
+        gl.uniform1f(uPhaseJit, +phaseJit.value);
+
+        const ndeg = ((+noiseDeg.value || 0) * Math.PI) / 180;
+        gl.uniform2f(uNoiseDir, Math.cos(ndeg), Math.sin(ndeg));
+        gl.uniform1f(uNoiseScale, Math.max(1.0, +noiseScaleU.value));
+        gl.uniform1f(uNoiseSpeed, Math.max(0.0, +noiseSpeedU.value));
+        gl.uniform1f(uNoiseOct, Math.max(1.0, Math.min(4.0, +noiseOct.value)));
+      }
+      function setUniformsOvr() {
+        gl.useProgram(prOvr);
+        gl.uniform2f(O.uRes, canvas.width, canvas.height);
+        if (field) {
+          gl.uniform2f(O.uWorld, field.worldW, field.worldH);
+          gl.uniform2f(O.uWorldOff, field.padPx, field.padPx);
+          gl.uniform2f(O.uFieldSize, field.Nx, field.Ny);
+        }
+        gl.uniform1f(O.uTime, performance.now() / 1000);
+        gl.uniform1f(O.uCell, +cell.value);
+        gl.uniform2f(
+          O.uGap,
+          Math.max(0, +gapX.value),
+          Math.max(0, +gapY.value)
+        );
+        gl.uniform1f(O.uScale, +scale.value);
+        gl.uniform1f(O.uMinS, +minS.value);
+        gl.uniform1f(O.uMaxS, +maxS.value);
+        gl.uniform1f(O.uPeriod, +period.value);
+        gl.uniform1f(O.uBreathe, breath.checked ? 1.0 : 0.0);
+        gl.uniform1f(O.uAA, 1.25);
+        gl.uniform1f(O.uNPow, +nPow.value);
+        gl.uniform1f(O.uKFac, +kFac.value);
+        gl.uniform1f(O.uShapeAmp, +shapeAmp.value);
+        gl.uniform1f(O.uFull9, full9.checked ? 1.0 : 0.0);
+        gl.uniform1f(O.uIsoScale, isoScale.checked ? 1.0 : 0.0);
+        gl.uniform1f(O.uInflMax, +inflMax.value);
+        gl.uniform1f(O.uLogoMinS, +logoMinS.value);
+        gl.uniform1f(O.uLogoMaxS, +logoMaxS.value);
+        gl.uniform1f(O.uOverK, overlay.kPx);
+        gl.uniform1f(O.uOverCount, overlay.count);
+        if (overlay.count > 0) {
+          gl.uniform4fv(O.uOverRectA, overlay.flatA);
+          gl.uniform2fv(O.uOverRectB, overlay.flatB);
+        }
+        gl.uniform1i(O.uDisp, 0);
+
+        // 模式2/3参数（与底层一致）
+        const deg = ((+waveDeg.value || 0) * Math.PI) / 180;
+        gl.uniform1f(O.uBMode, +bMode.value);
+        gl.uniform2f(O.uWaveDir, Math.cos(deg), Math.sin(deg));
+        const waveLen = Math.max(1, +waveLenU.value);
+        gl.uniform1f(O.uWaveK, (Math.PI * 2) / waveLen);
+        gl.uniform1f(O.uPhaseJit, +phaseJit.value);
+
+        const ndeg = ((+noiseDeg.value || 0) * Math.PI) / 180;
+        gl.uniform2f(O.uNoiseDir, Math.cos(ndeg), Math.sin(ndeg));
+        gl.uniform1f(O.uNoiseScale, Math.max(1.0, +noiseScaleU.value));
+        gl.uniform1f(O.uNoiseSpeed, Math.max(0.0, +noiseSpeedU.value));
+        gl.uniform1f(
+          O.uNoiseOct,
+          Math.max(1.0, Math.min(4.0, +noiseOct.value))
+        );
+      }
+      function setAllUniforms() {
+        setUniformsBase();
+        setUniformsOvr();
+      }
+      function setTimes(t) {
+        gl.useProgram(prBase);
+        gl.uniform1f(uTime, t / 1000);
+        gl.useProgram(prOvr);
+        gl.uniform1f(O.uTime, t / 1000);
+      }
+
+      function resize() {
+        setCanvasSize();
+        initField();
+        rebuildOverlay();
+        setAllUniforms();
+      }
+
+      const reinitTriggers = new Set([
+        cell,
+        gapX,
+        gapY,
+        scale,
+        fieldStep,
+        marginP,
+      ]);
+      const uiInputs = [
+        cell,
+        gapX,
+        gapY,
+        scale,
+        minS,
+        maxS,
+        period,
+        breath,
+        nPow,
+        kFac,
+        shapeAmp,
+        springK,
+        damp,
+        tension,
+        brushR,
+        brushF,
+        fieldStep,
+        isoScale,
+        full9,
+        marginP,
+        useSpeed,
+        vTau,
+        vMax,
+        kCoef,
+        dCoef,
+        tCoef,
+        rCoef,
+        fCoef,
+        inflMax,
+        inflResp,
+        inflDecay,
+        inflVRef,
+        inflVDead,
+        capBase,
+        capK,
+        reentryMs,
+        logoMinS,
+        logoMaxS,
+        lensFeather,
+        // 新增
+        bMode,
+        phaseJit,
+        waveDeg,
+        waveLenU,
+        noiseScaleU,
+        noiseSpeedU,
+        noiseDeg,
+        noiseOct,
+      ];
+      function syncAll() {
+        syncLabels();
+        saveCfg();
+      }
+
+      (function initUI() {
+        const cfg = loadCfg();
+        cell.value = cfg.cell;
+        gapX.value = cfg.gapX;
+        gapY.value = cfg.gapY;
+        scale.value = cfg.scale;
+        minS.value = cfg.minS;
+        maxS.value = cfg.maxS;
+        period.value = cfg.period;
+        breath.checked = cfg.breath;
+        nPow.value = cfg.nPow;
+        kFac.value = cfg.kFac;
+        shapeAmp.value = cfg.shapeAmp;
+        springK.value = cfg.springK;
+        damp.value = cfg.damp;
+        tension.value = cfg.tension;
+        brushR.value = cfg.brushR;
+        brushF.value = cfg.brushF;
+        fieldStep.value = cfg.fieldStep;
+        isoScale.checked = !!cfg.isoScale;
+        full9.checked = !!cfg.full9;
+        marginP.value = cfg.marginP;
+        useSpeed.checked = !!cfg.useSpeed;
+        vTau.value = cfg.vTau;
+        vMax.value = cfg.vMax;
+        kCoef.value = cfg.kCoef;
+        dCoef.value = cfg.dCoef;
+        tCoef.value = cfg.tCoef;
+        rCoef.value = cfg.rCoef;
+        fCoef.value = cfg.fCoef;
+        inflMax.value = cfg.inflMax;
+        inflResp.value = cfg.inflResp;
+        inflDecay.value = cfg.inflDecay;
+        inflVRef.value = cfg.inflVRef;
+        inflVDead.value = cfg.inflVDead;
+        capBase.value = cfg.capBase;
+        capK.value = cfg.capK;
+        reentryMs.value = cfg.reentryMs;
+        logoMinS.value = cfg.logoMinS;
+        logoMaxS.value = cfg.logoMaxS;
+        lensFeather.value = cfg.lensFeather;
+
+        // 新增
+        bMode.value = cfg.bMode;
+        phaseJit.value = cfg.phaseJit;
+        waveDeg.value = cfg.waveDeg;
+        waveLenU.value = cfg.waveLenU;
+        noiseScaleU.value = cfg.noiseScaleU;
+        noiseSpeedU.value = cfg.noiseSpeedU;
+        noiseDeg.value = cfg.noiseDeg;
+        noiseOct.value = cfg.noiseOct;
+
+        syncLabels();
+      })();
+
+      uiInputs.forEach((e) => {
+        e.addEventListener("input", () => {
+          if (reinitTriggers.has(e)) {
+            initField();
+            rebuildOverlay();
+          }
+          syncAll();
+        });
+        e.addEventListener("change", () => {
+          if (reinitTriggers.has(e)) {
+            initField();
+            rebuildOverlay();
+          }
+          syncAll();
+        });
+      });
+
+      /* ---------- 渲染循环：底层 → Logo(含透镜) ---------- */
+      resize();
+      addEventListener("resize", () => resize(), { passive: true });
+      let t0 = performance.now();
+      function tick(t) {
+        const dt = Math.min(0.033, (t - t0) / 1000);
+        t0 = t;
+        const eff = computeEffective(dt);
+        applyBrush(dt, eff);
+        stepField(dt, eff);
+        stepInflateAndLens(dt);
+        uploadField();
+        setAllUniforms();
+        setTimes(t);
+
+        gl.useProgram(prBase);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.useProgram(prOvr);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        syncLabels();
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>
